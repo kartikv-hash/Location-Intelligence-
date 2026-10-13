@@ -2,178 +2,201 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from pathlib import Path
 
 # ============================================================
 # SUNSTRIPE INTELLIGENCE
-# Renewable Energy Location Intelligence | United States
-# Solar | BESS | Wind
+# Renewable Energy Location Intelligence
+# Solar | Battery Storage | Wind
 # ============================================================
 
 st.set_page_config(
-    page_title="Sunstripe Intelligence",
-    page_icon="🔴",
+    page_title="Sunstripe Intelligence | Location Intelligence",
+    page_icon="S",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ------------------------------------------------------------
-# SUNSTRIPE BRAND THEME
-# Midnight navy | Warm ivory | Restrained red | Editorial type
-# ------------------------------------------------------------
+# ============================================================
+# THEME: SUNSTRIPE BLACK, IVORY AND RED
+# TYPOGRAPHY: DM SANS ONLY
+# ============================================================
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;1,500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
 
 :root {
-    --ink: #080B18;
+    --ink: #10111A;
     --navy: #050714;
     --red: #E8392D;
     --paper: #FBF9F7;
     --white: #FFFFFF;
-    --line: #E8E1DC;
-    --muted: #766F6A;
+    --line: #E7E0DB;
+    --muted: #716A65;
     --soft: #F2EEEA;
 }
 
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
+html, body, [class*="css"], button, input, textarea, select {
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
 }
 
 .stApp {
     background: var(--paper);
     color: var(--ink);
+    font-size: 14px;
 }
 
 .block-container {
     max-width: 1500px;
     padding-top: 1rem;
-    padding-bottom: 2.5rem;
-}
-
-header[data-testid="stHeader"] {
-    background: transparent;
+    padding-bottom: 2rem;
 }
 
 #MainMenu, footer {
     visibility: hidden;
 }
 
-div[data-testid="stToolbar"] {
-    visibility: hidden;
+header[data-testid="stHeader"] {
+    background: transparent;
 }
 
-/* Brand navigation */
+/* Header */
 
 .topbar {
     background: var(--navy);
     color: var(--white);
-    margin: -1rem -1rem 1.6rem -1rem;
-    padding: 20px 24px 16px;
+    margin: -1rem -1rem 1.7rem -1rem;
+    padding: 22px 24px 15px;
     border-bottom: 2px solid var(--red);
 }
 
 .brand {
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: -0.8px;
+    font-family: 'DM Sans', Arial, sans-serif !important;
     text-align: center;
-    color: var(--white);
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: -0.7px;
+    color: #FFFFFF;
 }
 
 .brand .accent {
-    color: #FF5145;
+    color: #F04438;
 }
 
 .brand-tagline {
-    font-size: 10px;
-    letter-spacing: 2.5px;
     text-align: center;
-    margin-top: 4px;
-    color: #C8C6CE;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 2px;
+    color: #D0CFD7;
     text-transform: uppercase;
+    margin-top: 5px;
 }
 
 .navrow {
     display: flex;
     justify-content: center;
-    gap: 26px;
+    gap: 27px;
     flex-wrap: wrap;
-    color: #F5F3F1;
-    font-size: 11px;
+    margin-top: 20px;
+    color: #F4F3F5;
+    font-size: 13px;
     font-weight: 600;
-    letter-spacing: .6px;
-    margin-top: 19px;
+    letter-spacing: 0;
 }
 
 .navitem {
-    padding: 6px 0;
+    padding: 8px 0;
     border-bottom: 2px solid transparent;
 }
 
 .navitem.active {
+    color: #FFFFFF;
     border-color: var(--red);
-    color: white;
 }
 
-/* Editorial heading */
+/* Main heading */
 
 .eyebrow {
     font-size: 11px;
-    letter-spacing: 1.6px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
     color: var(--red);
-    font-weight: 700;
-    margin: 5px 0 10px;
+    margin: 5px 0 12px;
 }
 
 .hero {
-    font-family: 'Playfair Display', serif;
-    font-size: clamp(32px, 4vw, 47px);
-    line-height: 1.1;
-    font-style: italic;
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: clamp(32px, 3.4vw, 43px);
+    font-weight: 700;
+    font-style: normal !important;
+    line-height: 1.18;
+    letter-spacing: -1.4px;
     color: var(--red);
-    letter-spacing: -1.1px;
-    margin: 12px 0 15px;
+    margin: 10px 0 14px;
 }
 
 .subtitle {
-    font-size: 14px;
-    line-height: 1.8;
-    color: #6F6762;
-    max-width: 850px;
-    margin-bottom: 23px;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.75;
+    color: #625B56;
+    max-width: 900px;
+    margin-bottom: 24px;
 }
 
 /* KPI cards */
 
 .kpi-card {
-    background: rgba(255,255,255,.62);
+    background: rgba(255,255,255,0.7);
     border: 1px solid var(--line);
-    padding: 17px;
-    min-height: 102px;
+    padding: 17px 18px;
+    min-height: 104px;
+    border-radius: 2px;
 }
 
 .kpi-value {
-    font-family: 'Playfair Display', serif;
-    font-size: 29px;
-    line-height: 1.2;
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.7px;
     color: var(--red);
     overflow-wrap: anywhere;
 }
 
 .kpi-label {
-    font-size: 11px;
-    color: #766F6A;
-    margin-top: 9px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    margin-top: 8px;
     line-height: 1.5;
 }
 
+.pill-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 16px 0 22px;
+}
+
+.pill {
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 7px 12px;
+    background: #FFFDFA;
+    color: #5F5752;
+    font-size: 12px;
+    font-weight: 500;
+}
+
 .section-title {
-    font-size: 14px;
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: 16px;
     font-weight: 700;
-    color: #282321;
+    color: #1B1918;
     border-top: 1px solid var(--line);
     padding-top: 18px;
     margin-top: 22px;
@@ -182,52 +205,27 @@ div[data-testid="stToolbar"] {
 
 .section-note {
     font-size: 11px;
-    letter-spacing: .5px;
-    color: #807771;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: var(--muted);
     text-transform: uppercase;
 }
 
-.pill-row {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin: 17px 0 22px;
-}
-
-.pill {
-    border: 1px solid var(--line);
-    border-radius: 20px;
-    padding: 6px 12px;
-    background: #FFFDFA;
-    color: #625A55;
-    font-size: 11px;
-}
-
-/* Streamlit widgets */
-
-div[data-testid="stMetric"] {
-    background: rgba(255,255,255,.65);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    padding: 13px 15px;
-}
-
-div[data-testid="stMetricValue"] {
-    font-family: 'Playfair Display', serif;
-    color: var(--red);
-}
+/* Tabs */
 
 .stTabs [data-baseweb="tab-list"] {
-    gap: 20px;
+    gap: 25px;
     border-bottom: 1px solid var(--line);
 }
 
 .stTabs [data-baseweb="tab"] {
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: 13px;
+    font-weight: 600;
     background: transparent;
     border-radius: 0;
-    padding: 11px 2px;
+    padding: 12px 0;
     color: #5D5550;
-    font-size: 12px;
 }
 
 .stTabs [aria-selected="true"] {
@@ -235,19 +233,47 @@ div[data-testid="stMetricValue"] {
     border-bottom: 2px solid var(--red) !important;
 }
 
+/* Metrics */
+
+div[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.7);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 15px;
+}
+
+div[data-testid="stMetricLabel"] {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+div[data-testid="stMetricValue"] {
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: 27px;
+    font-weight: 700;
+    color: var(--red);
+}
+
+/* Buttons */
+
 .stButton button, .stDownloadButton button {
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: 13px;
+    font-weight: 600;
     border-radius: 22px;
     border: 1px solid var(--red);
     color: var(--red);
     background: transparent;
-    font-weight: 600;
+    transition: all 0.15s ease;
 }
 
 .stButton button:hover, .stDownloadButton button:hover {
     background: var(--red);
-    color: white;
+    color: #FFFFFF;
     border-color: var(--red);
 }
+
+/* Data tables and inputs */
 
 div[data-testid="stDataFrame"] {
     border: 1px solid var(--line);
@@ -259,6 +285,14 @@ div[data-testid="stFileUploader"] {
     border-radius: 4px;
 }
 
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stSelectbox"] div,
+div[data-testid="stMultiSelect"] div {
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-size: 13px;
+}
+
 hr {
     border-color: var(--line);
 }
@@ -267,58 +301,74 @@ hr {
 
 section[data-testid="stSidebar"] {
     background: var(--navy);
-    border-right: 1px solid #252735;
+    border-right: 1px solid #272936;
 }
 
 section[data-testid="stSidebar"] * {
-    color: #F5F3F1;
+    font-family: 'DM Sans', Arial, sans-serif !important;
+    color: #F5F3F5;
 }
 
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 {
-    color: white;
-}
-
-section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
-    color: #C7C3CA;
+    color: #FFFFFF;
+    font-weight: 700;
 }
 
 section[data-testid="stSidebar"] hr {
-    border-color: #353643;
+    border-color: #343542;
 }
 
 section[data-testid="stSidebar"] input {
-    color: var(--ink);
+    color: #151515 !important;
 }
 
-footer {
-    visibility: hidden;
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: #C7C3CB;
+}
+
+/* Footer */
+
+.footer {
+    text-align: center;
+    color: #827A74;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.1px;
+    padding: 10px 0;
+}
+
+@media (max-width: 768px) {
+    .topbar {
+        padding: 18px 12px 13px;
+    }
+
+    .brand {
+        font-size: 22px;
+    }
+
+    .navrow {
+        gap: 14px;
+        font-size: 12px;
+    }
+
+    .hero {
+        font-size: 32px;
+        letter-spacing: -0.8px;
+    }
+
+    .subtitle {
+        font-size: 14px;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ------------------------------------------------------------
-# DATA LOADING
-# ------------------------------------------------------------
-
-@st.cache_data
-def load_asset_data():
-    # Default repository CSV
-    assets = pd.read_csv("renewable_asset_register.csv")
-    return assets
-
-
-def load_uploaded_data(uploaded_file):
-    if uploaded_file is not None:
-        return pd.read_csv(uploaded_file)
-    return None
-
-
-# ------------------------------------------------------------
+# ============================================================
 # HEADER
-# ------------------------------------------------------------
+# ============================================================
 
 st.markdown("""
 <div class="topbar">
@@ -337,31 +387,29 @@ st.markdown("""
         <span class="navitem">ABOUT</span>
     </div>
 </div>
+
+<div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
+
+<div class="hero">
+    Find the right place to build.
+</div>
+
+<div class="subtitle">
+    A unified intelligence workspace for renewable energy asset discovery,
+    location screening and portfolio analysis. Explore Solar, Battery Energy
+    Storage and Wind assets across the United States.
+</div>
 """, unsafe_allow_html=True)
 
-st.markdown(
-    '<div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>',
-    unsafe_allow_html=True,
-)
 
-st.markdown(
-    '<div class="hero">Find the next right place<br>to build.</div>',
-    unsafe_allow_html=True,
-)
+# ============================================================
+# DATA LOADING
+# ============================================================
 
-st.markdown(
-    '<div class="subtitle">'
-    'A unified intelligence workspace for renewable energy asset discovery, '
-    'location screening and portfolio analysis. Explore Solar, Battery Energy '
-    'Storage and Wind assets across the United States.'
-    '</div>',
-    unsafe_allow_html=True,
-)
+@st.cache_data
+def load_repository_csv():
+    return pd.read_csv("renewable_asset_register.csv")
 
-
-# ------------------------------------------------------------
-# DATA INPUT
-# ------------------------------------------------------------
 
 with st.sidebar:
     st.markdown("## Sunstripe")
@@ -374,51 +422,45 @@ with st.sidebar:
     uploaded_file = st.file_uploader(
         "Upload asset register",
         type=["csv"],
-        help="Upload a CSV containing renewable energy asset information.",
+        help="Upload a CSV containing renewable energy asset records.",
     )
 
     st.divider()
     st.markdown("### Asset filters")
 
-try:
-    assets = load_asset_data()
-    data_message = "Repository CSV loaded successfully."
-except FileNotFoundError:
-    assets = None
-    data_message = (
-        "renewable_asset_register.csv was not found in the repository root. "
-        "Upload the file below or add it to the repository."
-    )
-except Exception as exc:
-    assets = None
-    data_message = f"Could not load the repository CSV: {exc}"
 
 if uploaded_file is not None:
     try:
-        assets = load_uploaded_data(uploaded_file)
+        assets = pd.read_csv(uploaded_file)
         data_message = "Uploaded CSV loaded successfully."
     except Exception as exc:
-        assets = None
-        data_message = f"Could not read uploaded CSV: {exc}"
+        st.error(f"Could not read the uploaded CSV: {exc}")
+        st.stop()
+else:
+    try:
+        assets = load_repository_csv()
+        data_message = "Repository CSV loaded successfully."
+    except FileNotFoundError:
+        st.error(
+            "renewable_asset_register.csv was not found. Add it to the "
+            "repository root or upload it using the sidebar."
+        )
+        st.stop()
+    except Exception as exc:
+        st.error(f"Could not load the repository CSV: {exc}")
+        st.stop()
 
-if assets is None:
-    st.error(data_message)
-    st.info(
-        "Keep renewable_asset_register.csv in the same repository folder "
-        "as app.py, or upload a compatible CSV using the sidebar."
-    )
-    st.stop()
+
+# ============================================================
+# STANDARDIZE COLUMN NAMES
+# ============================================================
 
 assets.columns = [
     str(column).strip().lower().replace(" ", "_")
     for column in assets.columns
 ]
 
-# ------------------------------------------------------------
-# NORMALIZE COLUMN NAMES
-# ------------------------------------------------------------
-
-column_aliases = {
+aliases = {
     "technology_group": [
         "technology_group", "technology", "energy_type", "fuel_type"
     ],
@@ -442,11 +484,11 @@ column_aliases = {
     "source_year": ["source_year", "year"],
 }
 
-for standard_name, alternatives in column_aliases.items():
-    if standard_name not in assets.columns:
+for standard, alternatives in aliases.items():
+    if standard not in assets.columns:
         for alternative in alternatives:
             if alternative in assets.columns:
-                assets[standard_name] = assets[alternative]
+                assets[standard] = assets[alternative]
                 break
 
 defaults = {
@@ -482,11 +524,7 @@ assets["nameplate_energy_capacity_mwh"] = (
 )
 
 for column in [
-    "technology_group",
-    "plant_name",
-    "state",
-    "county",
-    "lifecycle_group",
+    "technology_group", "plant_name", "state", "county", "lifecycle_group"
 ]:
     assets[column] = (
         assets[column].fillna("Unknown").astype(str).str.strip()
@@ -494,89 +532,87 @@ for column in [
 
 
 def classify_technology(value):
-    value = str(value).lower()
+    value = str(value).strip().lower()
 
-    if "solar" in value or "photovoltaic" in value or value == "pv":
+    if any(word in value for word in ["solar", "photovoltaic"]):
         return "Solar"
-
+    if value == "pv":
+        return "Solar"
     if "wind" in value:
         return "Wind"
-
-    if "battery" in value or "storage" in value or "bess" in value:
+    if any(word in value for word in ["battery", "storage", "bess"]):
         return "BESS"
-
     return "Other"
 
 
 assets["technology_display"] = (
     assets["technology_group"].apply(classify_technology)
 )
-
 assets = assets.reset_index(drop=True)
 assets["asset_record_id"] = assets.index + 1
 
 
-# ------------------------------------------------------------
+# ============================================================
 # SIDEBAR FILTERS
-# ------------------------------------------------------------
+# ============================================================
 
 with st.sidebar:
-    available_technologies = sorted(
+    technologies = sorted(
         assets["technology_display"].dropna().unique().tolist()
     )
 
     selected_technologies = st.multiselect(
         "Technology",
-        options=available_technologies,
-        default=available_technologies,
+        options=technologies,
+        default=technologies,
     )
 
-    available_states = sorted(
-        assets["state"].dropna().unique().tolist()
-    )
+    states = sorted(assets["state"].dropna().unique().tolist())
 
     selected_states = st.multiselect(
         "State",
-        options=available_states,
+        options=states,
         default=[],
         help="Leave empty to include all states.",
     )
 
-    available_statuses = sorted(
+    statuses = sorted(
         assets["lifecycle_group"].dropna().unique().tolist()
     )
 
     selected_statuses = st.multiselect(
         "Lifecycle / status",
-        options=available_statuses,
-        default=available_statuses,
+        options=statuses,
+        default=statuses,
     )
 
-    minimum_capacity = float(
-        max(0, assets["nameplate_capacity_mw"].min())
+    min_capacity = max(
+        0.0,
+        float(assets["nameplate_capacity_mw"].min())
     )
-    maximum_capacity = float(
-        max(minimum_capacity, assets["nameplate_capacity_mw"].max())
+    max_capacity = max(
+        min_capacity,
+        float(assets["nameplate_capacity_mw"].max())
     )
 
-    if maximum_capacity > minimum_capacity:
+    if max_capacity > min_capacity:
         capacity_range = st.slider(
             "Capacity range (MW)",
-            min_value=minimum_capacity,
-            max_value=maximum_capacity,
-            value=(minimum_capacity, maximum_capacity),
+            min_value=min_capacity,
+            max_value=max_capacity,
+            value=(min_capacity, max_capacity),
         )
     else:
-        capacity_range = (minimum_capacity, maximum_capacity)
+        capacity_range = (min_capacity, max_capacity)
 
     st.divider()
     st.caption("SUNSTRIPE INTELLIGENCE")
-    st.caption("Renewable asset data and location screening")
+    st.caption("Renewable energy asset screening")
 
 
-# ------------------------------------------------------------
+# ============================================================
 # APPLY FILTERS
-# ------------------------------------------------------------
+# ============================================================
 
 filtered_assets = assets[
     assets["technology_display"].isin(selected_technologies)
@@ -595,9 +631,9 @@ filtered_assets = filtered_assets[
 ].copy()
 
 
-# ------------------------------------------------------------
-# KPI SUMMARY
-# ------------------------------------------------------------
+# ============================================================
+# EXECUTIVE SUMMARY
+# ============================================================
 
 total_records = len(filtered_assets)
 total_capacity = filtered_assets["nameplate_capacity_mw"].sum()
@@ -620,58 +656,56 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{total_records:,}</div><div class="kpi-label">'
-        'Asset records in view</div></div>',
+        f'<div class="kpi-card">'
+        f'<div class="kpi-value">{total_records:,}</div>'
+        f'<div class="kpi-label">Asset records in view</div></div>',
         unsafe_allow_html=True,
     )
 
 with c2:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{total_capacity:,.1f} MW</div><div class="kpi-label">'
-        'Represented nameplate capacity</div></div>',
+        f'<div class="kpi-card">'
+        f'<div class="kpi-value">{total_capacity:,.1f} MW</div>'
+        f'<div class="kpi-label">Represented power capacity</div></div>',
         unsafe_allow_html=True,
     )
 
 with c3:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{total_storage:,.1f} MWh</div><div class="kpi-label">'
-        'Represented storage energy capacity</div></div>',
+        f'<div class="kpi-card">'
+        f'<div class="kpi-value">{total_storage:,.1f} MWh</div>'
+        f'<div class="kpi-label">Represented storage energy</div></div>',
         unsafe_allow_html=True,
     )
 
 with c4:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{states_covered:,}</div><div class="kpi-label">'
-        'States represented</div></div>',
+        f'<div class="kpi-card">'
+        f'<div class="kpi-value">{states_covered:,}</div>'
+        f'<div class="kpi-label">States represented</div></div>',
         unsafe_allow_html=True,
     )
 
-technology_pills = (
+st.markdown(
+    f'<div class="pill-row">'
     f'<span class="pill">Solar · {solar_count:,}</span>'
     f'<span class="pill">Wind · {wind_count:,}</span>'
     f'<span class="pill">BESS · {bess_count:,}</span>'
-)
-
-st.markdown(
-    f'<div class="pill-row">{technology_pills}</div>',
+    f'</div>',
     unsafe_allow_html=True,
 )
 
 st.caption(
     "Metrics describe the filtered CSV dataset. Records may not represent "
-    "unique development projects and are not necessarily independently verified."
+    "unique projects and are not necessarily independently verified."
 )
 
 
-# ------------------------------------------------------------
-# NAVIGATION TABS
-# ------------------------------------------------------------
+# ============================================================
+# MAIN WORKSPACE
+# ============================================================
 
-tab_overview, tab_map, tab_assets, tab_data = st.tabs([
+tab_overview, tab_map, tab_register, tab_method = st.tabs([
     "Executive overview",
     "Location explorer",
     "Asset register",
@@ -679,9 +713,9 @@ tab_overview, tab_map, tab_assets, tab_data = st.tabs([
 ])
 
 
-# ------------------------------------------------------------
-# TAB 1: EXECUTIVE OVERVIEW
-# ------------------------------------------------------------
+# ============================================================
+# OVERVIEW
+# ============================================================
 
 with tab_overview:
     st.markdown(
@@ -692,23 +726,23 @@ with tab_overview:
     left, right = st.columns(2)
 
     with left:
-        technology_counts = (
+        tech_counts = (
             filtered_assets["technology_display"]
             .value_counts()
             .rename_axis("Technology")
             .reset_index(name="Asset records")
         )
 
-        if not technology_counts.empty:
+        if not tech_counts.empty:
             fig = px.pie(
-                technology_counts,
+                tech_counts,
                 names="Technology",
                 values="Asset records",
                 hole=0.60,
                 title="Asset records by technology",
                 color="Technology",
                 color_discrete_map={
-                    "Solar": "#DFAE2D",
+                    "Solar": "#D9A72E",
                     "Wind": "#41986A",
                     "BESS": "#3979CC",
                     "Other": "#A39B95",
@@ -718,13 +752,14 @@ with tab_overview:
                 paper_bgcolor="#FBF9F7",
                 plot_bgcolor="#FBF9F7",
                 font_family="DM Sans",
+                font_size=12,
                 font_color="#282321",
                 margin=dict(t=65, b=20, l=15, r=15),
                 legend_title_text="",
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No records match the selected filters.")
+            st.info("No assets match the selected filters.")
 
     with right:
         state_capacity = (
@@ -745,14 +780,12 @@ with tab_overview:
                     "nameplate_capacity_mw": "Capacity (MW)",
                 },
             )
-            fig.update_traces(
-                marker_color="#E8392D",
-                marker_line_width=0,
-            )
+            fig.update_traces(marker_color="#E8392D")
             fig.update_layout(
                 paper_bgcolor="#FBF9F7",
                 plot_bgcolor="#FBF9F7",
                 font_family="DM Sans",
+                font_size=12,
                 font_color="#282321",
                 margin=dict(t=65, b=35, l=15, r=15),
                 xaxis_title="",
@@ -779,13 +812,14 @@ with tab_overview:
             lifecycle_counts,
             x="Lifecycle / status",
             y="Asset records",
-            title="Assets by reported lifecycle status",
+            title="Asset records by reported lifecycle status",
         )
         fig.update_traces(marker_color="#E8392D")
         fig.update_layout(
             paper_bgcolor="#FBF9F7",
             plot_bgcolor="#FBF9F7",
             font_family="DM Sans",
+            font_size=12,
             font_color="#282321",
             xaxis_title="",
             yaxis_title="Asset records",
@@ -793,9 +827,9 @@ with tab_overview:
         st.plotly_chart(fig, use_container_width=True)
 
 
-# ------------------------------------------------------------
-# TAB 2: LOCATION EXPLORER
-# ------------------------------------------------------------
+# ============================================================
+# LOCATION EXPLORER
+# ============================================================
 
 with tab_map:
     st.markdown(
@@ -804,8 +838,8 @@ with tab_map:
     )
 
     st.caption(
-        "Explore reported asset locations across the United States. "
-        "Plant coordinates are not parcel boundaries or buildable-area assessments."
+        "Explore reported asset locations. Coordinates do not establish "
+        "parcel boundaries or buildable land."
     )
 
     map_data = filtered_assets.dropna(
@@ -837,7 +871,7 @@ with tab_map:
             height=610,
             map_style="open-street-map",
             color_discrete_map={
-                "Solar": "#DFAE2D",
+                "Solar": "#D9A72E",
                 "Wind": "#41986A",
                 "BESS": "#3979CC",
                 "Other": "#8D8580",
@@ -854,44 +888,34 @@ with tab_map:
             margin=dict(t=10, b=10, l=10, r=10),
             paper_bgcolor="#FBF9F7",
             font_family="DM Sans",
+            font_size=12,
             font_color="#282321",
         )
 
         st.plotly_chart(fig_map, use_container_width=True)
-
-        st.markdown(
-            '<div class="pill-row">'
-            '<span class="pill">Solar · Gold</span>'
-            '<span class="pill">Wind · Green</span>'
-            '<span class="pill">BESS · Blue</span>'
-            '<span class="pill">Other · Grey</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-
     else:
         st.warning(
-            "No valid latitude and longitude values are available for the "
-            "selected records. Check your CSV coordinate columns."
+            "No valid coordinates were found. Check the latitude and "
+            "longitude columns in your CSV."
         )
 
 
-# ------------------------------------------------------------
-# TAB 3: ASSET REGISTER
-# ------------------------------------------------------------
+# ============================================================
+# ASSET REGISTER
+# ============================================================
 
-with tab_assets:
+with tab_register:
     st.markdown(
         '<div class="section-title">Renewable asset register</div>',
         unsafe_allow_html=True,
     )
 
     search_term = st.text_input(
-        "Search asset name, state, county, technology or status",
-        placeholder="Example: Texas, solar, battery...",
+        "Search asset register",
+        placeholder="Search name, state, county, technology or status",
     )
 
-    searchable_columns = [
+    search_columns = [
         "plant_name",
         "state",
         "county",
@@ -903,9 +927,12 @@ with tab_assets:
     search_results = filtered_assets.copy()
 
     if search_term.strip():
-        search_mask = search_results[searchable_columns].apply(
-            lambda column: column.astype(str).str.contains(
-                search_term.strip(), case=False, na=False
+        search_mask = search_results[search_columns].apply(
+            lambda col: col.astype(str).str.contains(
+                search_term.strip(),
+                case=False,
+                na=False,
+                regex=False,
             )
         ).any(axis=1)
 
@@ -934,150 +961,163 @@ with tab_assets:
         search_results[display_columns],
         use_container_width=True,
         hide_index=True,
-        height=450,
+        height=460,
         column_config={
             "asset_record_id": st.column_config.NumberColumn("Record ID"),
             "plant_name": st.column_config.TextColumn("Asset / plant name"),
-            "technology_group": st.column_config.TextColumn("Reported technology"),
-            "technology_display": st.column_config.TextColumn("Technology group"),
+            "technology_group": st.column_config.TextColumn(
+                "Reported technology"
+            ),
+            "technology_display": st.column_config.TextColumn(
+                "Technology group"
+            ),
             "nameplate_capacity_mw": st.column_config.NumberColumn(
                 "Capacity (MW)", format="%.2f"
             ),
             "nameplate_energy_capacity_mwh": st.column_config.NumberColumn(
                 "Storage energy (MWh)", format="%.2f"
             ),
-            "latitude": st.column_config.NumberColumn("Latitude", format="%.5f"),
-            "longitude": st.column_config.NumberColumn("Longitude", format="%.5f"),
+            "latitude": st.column_config.NumberColumn(
+                "Latitude", format="%.5f"
+            ),
+            "longitude": st.column_config.NumberColumn(
+                "Longitude", format="%.5f"
+            ),
         },
     )
 
     st.caption(f"{len(search_results):,} asset records shown.")
 
     st.download_button(
-        label="Download filtered asset register (CSV)",
+        "Download filtered asset register (CSV)",
         data=search_results.to_csv(index=False).encode("utf-8"),
         file_name="sunstripe_filtered_asset_register.csv",
         mime="text/csv",
     )
 
 
-# ------------------------------------------------------------
-# TAB 4: DATA & METHODOLOGY
-# ------------------------------------------------------------
+# ============================================================
+# DATA & METHODOLOGY
+# ============================================================
 
-with tab_data:
+with tab_method:
     st.markdown(
-        '<div class="section-title">Data provenance & methodology</div>',
+        '<div class="section-title">Data provenance and methodology</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown("""
     **Default data source**
 
-    `renewable_asset_register.csv` located in the root directory of the GitHub
-    repository. A CSV can also be uploaded through the sidebar.
+    `renewable_asset_register.csv` in the repository root. Alternatively,
+    upload a CSV through the sidebar.
 
-    **Supported common input columns**
+    **Recognized input fields**
 
     | Field | Purpose |
     |---|---|
-    | `plant_name` / `project_name` | Plant or project name |
-    | `technology_group` / `technology` | Reported technology |
+    | `plant_name` / `project_name` | Asset or project name |
+    | `technology_group` / `technology` | Technology |
     | `state` | State |
     | `county` | County |
-    | `latitude` / `longitude` | Asset location |
+    | `latitude` / `longitude` | Geographic coordinates |
     | `nameplate_capacity_mw` / `capacity_mw` | Power capacity in MW |
-    | `nameplate_energy_capacity_mwh` / `energy_capacity_mwh` | Storage energy in MWh |
+    | `nameplate_energy_capacity_mwh` / `energy_capacity_mwh` | Energy capacity in MWh |
     | `lifecycle_group` / `status` | Reported asset status |
     | `source_year` / `year` | Source year |
     """)
 
     st.markdown(
-        '<div class="section-title">Recommended authoritative data sources</div>',
+        '<div class="section-title">Recommended authoritative sources</div>',
         unsafe_allow_html=True,
     )
 
-    source_rows = [
+    sources = pd.DataFrame([
         {
             "Provider": "US Energy Information Administration",
             "Data use": "Generator and plant inventories",
-            "Link": "https://www.eia.gov/opendata/",
+            "Official source": "https://www.eia.gov/opendata/",
         },
         {
             "Provider": "National Renewable Energy Laboratory",
-            "Data use": "Renewable energy resource information",
-            "Link": "https://developer.nrel.gov/",
+            "Data use": "Renewable resource information",
+            "Official source": "https://developer.nrel.gov/",
         },
         {
             "Provider": "US Geological Survey",
-            "Data use": "Elevation, terrain and hydrography",
-            "Link": "https://www.usgs.gov/",
+            "Data use": "Terrain, elevation and hydrography",
+            "Official source": "https://www.usgs.gov/",
         },
         {
             "Provider": "Federal Emergency Management Agency",
             "Data use": "Flood hazard information",
-            "Link": "https://www.fema.gov/flood-maps",
+            "Official source": "https://www.fema.gov/flood-maps",
         },
         {
             "Provider": "US Fish and Wildlife Service",
             "Data use": "Wetlands and ecological screening",
-            "Link": "https://www.fws.gov/",
+            "Official source": "https://www.fws.gov/",
         },
         {
             "Provider": "ERCOT",
-            "Data use": "Texas market and grid information",
-            "Link": "https://www.ercot.com/",
+            "Data use": "Texas grid and electricity market",
+            "Official source": "https://www.ercot.com/",
         },
         {
             "Provider": "CAISO",
-            "Data use": "California market and grid information",
-            "Link": "https://www.caiso.com/",
+            "Data use": "California grid and electricity market",
+            "Official source": "https://www.caiso.com/",
         },
         {
             "Provider": "MISO",
-            "Data use": "Regional market and grid information",
-            "Link": "https://www.misoenergy.org/",
+            "Data use": "Regional grid and market information",
+            "Official source": "https://www.misoenergy.org/",
         },
         {
             "Provider": "PJM",
-            "Data use": "Regional market and interconnection information",
-            "Link": "https://www.pjm.com/",
+            "Data use": "Regional grid and market information",
+            "Official source": "https://www.pjm.com/",
         },
-    ]
+    ])
 
     st.dataframe(
-        pd.DataFrame(source_rows),
+        sources,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Link": st.column_config.LinkColumn("Official source"),
+            "Official source": st.column_config.LinkColumn(
+                "Official source"
+            ),
         },
     )
 
     st.markdown(
-        '<div class="section-title">Screening limitations</div>',
+        '<div class="section-title">Important limitations</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown("""
-    - This version displays data supplied in the asset register and does not
-      independently verify every record.
-    - Asset coordinates do not establish parcel boundaries or available acreage.
-    - MW measures power capacity. MWh measures energy capacity.
-    - This application does not currently connect automatically to the listed
-      external data sources.
-    - Land values, comparable transactions, parcel ownership, transmission
-      capacity, environmental constraints and permitting restrictions require
-      separate validated data and analysis.
-    - Commercial use of datasets must comply with each provider's licensing terms.
+    - The platform analyzes the provided CSV and does not independently
+      verify every asset record.
+    - A point location is not a parcel boundary or buildable-area assessment.
+    - MW is power capacity; MWh is energy capacity.
+    - External sources listed here are references, not active data integrations.
+    - Interconnection capacity, land ownership, permitting, environmental
+      constraints, resource quality and market economics require additional
+      verified datasets and dedicated analysis.
     """)
+
+
+# ============================================================
+# FOOTER
+# ============================================================
 
 st.divider()
 
-st.markdown(
-    '<div style="text-align:center;color:#807771;font-size:11px;'
-    'letter-spacing:1px;padding:8px;">'
-    'SUNSTRIPE INTELLIGENCE &nbsp; · &nbsp; ENERGY INFRASTRUCTURE'
-    '</div>',
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<div class="footer">
+    SUNSTRIPE INTELLIGENCE &nbsp; · &nbsp;
+    ENERGY INFRASTRUCTURE &nbsp; · &nbsp;
+    SOLAR / STORAGE / WIND
+</div>
+""", unsafe_allow_html=True)
