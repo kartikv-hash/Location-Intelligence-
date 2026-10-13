@@ -578,4 +578,4 @@ st.write(
 )
 
 st.caption("SUNSTRIPE | Renewable Energy Location Intelligence")
-```
+
