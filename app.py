@@ -10,15 +10,15 @@ import plotly.express as px
 # ============================================================
 
 st.set_page_config(
-    page_title="Sunstripe Intelligence | Location Intelligence",
+    page_title="Sunstripe Intelligence",
     page_icon="S",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ============================================================
-# THEME: SUNSTRIPE BLACK, IVORY AND RED
-# TYPOGRAPHY: DM SANS ONLY
+# THEME AND TYPOGRAPHY
+# Black text on ivory, red accents, white text on dark header
 # ============================================================
 
 st.markdown("""
@@ -26,16 +26,17 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
 
 :root {
-    --ink: #10111A;
+    --ink: #000000;
     --navy: #050714;
     --red: #E8392D;
     --paper: #FBF9F7;
     --white: #FFFFFF;
     --line: #E7E0DB;
-    --muted: #716A65;
+    --muted: #000000;
     --soft: #F2EEEA;
 }
 
+/* Global typography and background */
 html, body, [class*="css"], button, input, textarea, select {
     font-family: 'DM Sans', Arial, sans-serif !important;
     -webkit-font-smoothing: antialiased;
@@ -43,7 +44,7 @@ html, body, [class*="css"], button, input, textarea, select {
 
 .stApp {
     background: var(--paper);
-    color: var(--ink);
+    color: #000000 !important;
     font-size: 14px;
 }
 
@@ -61,11 +62,24 @@ header[data-testid="stHeader"] {
     background: transparent;
 }
 
-/* Header */
+/* Force black text throughout the light main canvas */
+.stApp [data-testid="stAppViewContainer"] .main,
+.stApp [data-testid="stAppViewContainer"] .main p,
+.stApp [data-testid="stAppViewContainer"] .main label,
+.stApp [data-testid="stAppViewContainer"] .main li,
+.stApp [data-testid="stAppViewContainer"] .main small,
+.stApp [data-testid="stAppViewContainer"] .main strong,
+.stApp [data-testid="stAppViewContainer"] .main em {
+    color: #000000;
+}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
 
 .topbar {
     background: var(--navy);
-    color: var(--white);
+    color: #FFFFFF;
     margin: -1rem -1rem 1.7rem -1rem;
     padding: 22px 24px 15px;
     border-bottom: 2px solid var(--red);
@@ -77,11 +91,11 @@ header[data-testid="stHeader"] {
     font-size: 25px;
     font-weight: 700;
     letter-spacing: -0.7px;
-    color: #FFFFFF;
+    color: #FFFFFF !important;
 }
 
 .brand .accent {
-    color: #F04438;
+    color: var(--red) !important;
 }
 
 .brand-tagline {
@@ -89,7 +103,7 @@ header[data-testid="stHeader"] {
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 2px;
-    color: #D0CFD7;
+    color: #FFFFFF !important;
     text-transform: uppercase;
     margin-top: 5px;
 }
@@ -100,30 +114,32 @@ header[data-testid="stHeader"] {
     gap: 27px;
     flex-wrap: wrap;
     margin-top: 20px;
-    color: #F4F3F5;
+    color: #FFFFFF;
     font-size: 13px;
     font-weight: 600;
-    letter-spacing: 0;
 }
 
 .navitem {
     padding: 8px 0;
+    color: #FFFFFF !important;
     border-bottom: 2px solid transparent;
 }
 
 .navitem.active {
-    color: #FFFFFF;
+    color: var(--red) !important;
     border-color: var(--red);
 }
 
-/* Main heading */
+/* ============================================================
+   MAIN HEADING
+   ============================================================ */
 
 .eyebrow {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: var(--red);
+    color: var(--red) !important;
     margin: 5px 0 12px;
 }
 
@@ -134,7 +150,7 @@ header[data-testid="stHeader"] {
     font-style: normal !important;
     line-height: 1.18;
     letter-spacing: -1.4px;
-    color: var(--red);
+    color: var(--red) !important;
     margin: 10px 0 14px;
 }
 
@@ -142,12 +158,14 @@ header[data-testid="stHeader"] {
     font-size: 15px;
     font-weight: 400;
     line-height: 1.75;
-    color: #625B56;
+    color: #000000 !important;
     max-width: 900px;
     margin-bottom: 24px;
 }
 
-/* KPI cards */
+/* ============================================================
+   KPI CARDS
+   ============================================================ */
 
 .kpi-card {
     background: rgba(255,255,255,0.7);
@@ -163,14 +181,14 @@ header[data-testid="stHeader"] {
     font-weight: 700;
     line-height: 1.25;
     letter-spacing: -0.7px;
-    color: var(--red);
+    color: var(--red) !important;
     overflow-wrap: anywhere;
 }
 
 .kpi-label {
     font-size: 12px;
     font-weight: 500;
-    color: var(--muted);
+    color: #000000 !important;
     margin-top: 8px;
     line-height: 1.5;
 }
@@ -187,7 +205,7 @@ header[data-testid="stHeader"] {
     border-radius: 20px;
     padding: 7px 12px;
     background: #FFFDFA;
-    color: #5F5752;
+    color: #000000 !important;
     font-size: 12px;
     font-weight: 500;
 }
@@ -196,7 +214,7 @@ header[data-testid="stHeader"] {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: 16px;
     font-weight: 700;
-    color: #1B1918;
+    color: #000000 !important;
     border-top: 1px solid var(--line);
     padding-top: 18px;
     margin-top: 22px;
@@ -207,11 +225,14 @@ header[data-testid="stHeader"] {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.8px;
-    color: var(--muted);
+    color: #000000 !important;
     text-transform: uppercase;
 }
 
-/* Tabs */
+/* ============================================================
+   STREAMLIT TABS
+   Critical fix for invisible tab labels
+   ============================================================ */
 
 .stTabs [data-baseweb="tab-list"] {
     gap: 25px;
@@ -225,15 +246,32 @@ header[data-testid="stHeader"] {
     background: transparent;
     border-radius: 0;
     padding: 12px 0;
-    color: #5D5550;
+    color: #000000 !important;
 }
 
-.stTabs [aria-selected="true"] {
+.stTabs [data-baseweb="tab"] p,
+.stTabs [data-baseweb="tab"] span,
+.stTabs [data-baseweb="tab"] div {
+    color: #000000 !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
     color: var(--red) !important;
-    border-bottom: 2px solid var(--red) !important;
 }
 
-/* Metrics */
+.stTabs [aria-selected="true"],
+.stTabs [aria-selected="true"] p,
+.stTabs [aria-selected="true"] span,
+.stTabs [aria-selected="true"] div {
+    color: var(--red) !important;
+    border-bottom-color: var(--red) !important;
+}
+
+/* ============================================================
+   METRICS
+   ============================================================ */
 
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.7);
@@ -242,41 +280,54 @@ div[data-testid="stMetric"] {
     padding: 15px;
 }
 
-div[data-testid="stMetricLabel"] {
-    font-size: 12px;
-    font-weight: 500;
+div[data-testid="stMetricLabel"],
+div[data-testid="stMetricLabel"] *,
+div[data-testid="stMetricDelta"],
+div[data-testid="stMetricDelta"] * {
+    color: #000000 !important;
 }
 
 div[data-testid="stMetricValue"] {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: 27px;
     font-weight: 700;
-    color: var(--red);
+    color: var(--red) !important;
 }
 
-/* Buttons */
+/* ============================================================
+   BUTTONS
+   ============================================================ */
 
-.stButton button, .stDownloadButton button {
+.stButton button,
+.stDownloadButton button {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: 13px;
     font-weight: 600;
     border-radius: 22px;
     border: 1px solid var(--red);
-    color: var(--red);
+    color: var(--red) !important;
     background: transparent;
     transition: all 0.15s ease;
 }
 
-.stButton button:hover, .stDownloadButton button:hover {
-    background: var(--red);
-    color: #FFFFFF;
+.stButton button:hover,
+.stDownloadButton button:hover {
+    background: var(--red) !important;
+    color: #FFFFFF !important;
     border-color: var(--red);
 }
 
-/* Data tables and inputs */
+/* ============================================================
+   TABLES AND INPUTS
+   ============================================================ */
 
 div[data-testid="stDataFrame"] {
     border: 1px solid var(--line);
+}
+
+div[data-testid="stDataFrame"] *,
+div[data-testid="stTable"] * {
+    color: #000000 !important;
 }
 
 div[data-testid="stFileUploader"] {
@@ -285,35 +336,53 @@ div[data-testid="stFileUploader"] {
     border-radius: 4px;
 }
 
-div[data-testid="stTextInput"] input,
-div[data-testid="stNumberInput"] input,
-div[data-testid="stSelectbox"] div,
-div[data-testid="stMultiSelect"] div {
+.stApp input,
+.stApp textarea,
+.stApp select {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: 13px;
+    color: #000000 !important;
+}
+
+.stApp input::placeholder,
+.stApp textarea::placeholder {
+    color: #000000 !important;
+    opacity: 0.7;
+}
+
+div[data-testid="stWidgetLabel"],
+div[data-testid="stWidgetLabel"] *,
+.stApp [data-testid="stCaptionContainer"],
+.stApp [data-testid="stCaptionContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] li {
+    color: #000000 !important;
 }
 
 hr {
     border-color: var(--line);
 }
 
-/* Sidebar */
+/* ============================================================
+   SIDEBAR
+   Keep the sidebar dark with white text
+   ============================================================ */
 
 section[data-testid="stSidebar"] {
     background: var(--navy);
     border-right: 1px solid #272936;
 }
 
-section[data-testid="stSidebar"] * {
-    font-family: 'DM Sans', Arial, sans-serif !important;
-    color: #F5F3F5;
-}
-
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 {
-    color: #FFFFFF;
-    font-weight: 700;
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] small,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+    color: #FFFFFF !important;
 }
 
 section[data-testid="stSidebar"] hr {
@@ -321,18 +390,17 @@ section[data-testid="stSidebar"] hr {
 }
 
 section[data-testid="stSidebar"] input {
-    color: #151515 !important;
+    color: #000000 !important;
+    background: #FFFFFF !important;
 }
 
-section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
-    color: #C7C3CB;
-}
-
-/* Footer */
+/* ============================================================
+   FOOTER
+   ============================================================ */
 
 .footer {
     text-align: center;
-    color: #827A74;
+    color: #000000 !important;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 1.1px;
@@ -390,14 +458,12 @@ st.markdown("""
 
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 
-<div class="hero">
-    Find the right place to build.
-</div>
+<div class="hero">Find the right place to build.</div>
 
 <div class="subtitle">
-    A unified intelligence workspace for renewable energy asset discovery,
-    location screening and portfolio analysis. Explore Solar, Battery Energy
-    Storage and Wind assets across the United States.
+A unified intelligence workspace for renewable energy asset discovery,
+location screening and portfolio analysis. Explore Solar, Battery Energy
+Storage and Wind assets across the United States.
 </div>
 """, unsafe_allow_html=True)
 
@@ -452,7 +518,7 @@ else:
 
 
 # ============================================================
-# STANDARDIZE COLUMN NAMES
+# STANDARDIZE COLUMNS
 # ============================================================
 
 assets.columns = [
@@ -524,7 +590,11 @@ assets["nameplate_energy_capacity_mwh"] = (
 )
 
 for column in [
-    "technology_group", "plant_name", "state", "county", "lifecycle_group"
+    "technology_group",
+    "plant_name",
+    "state",
+    "county",
+    "lifecycle_group",
 ]:
     assets[column] = (
         assets[column].fillna("Unknown").astype(str).str.strip()
@@ -548,6 +618,7 @@ def classify_technology(value):
 assets["technology_display"] = (
     assets["technology_group"].apply(classify_technology)
 )
+
 assets = assets.reset_index(drop=True)
 assets["asset_record_id"] = assets.index + 1
 
@@ -611,7 +682,7 @@ with st.sidebar:
 
 
 # ============================================================
-# APPLY FILTERS
+# FILTER DATA
 # ============================================================
 
 filtered_assets = assets[
@@ -702,7 +773,7 @@ st.caption(
 
 
 # ============================================================
-# MAIN WORKSPACE
+# WORKSPACE TABS
 # ============================================================
 
 tab_overview, tab_map, tab_register, tab_method = st.tabs([
@@ -714,7 +785,7 @@ tab_overview, tab_map, tab_register, tab_method = st.tabs([
 
 
 # ============================================================
-# OVERVIEW
+# TAB 1: EXECUTIVE OVERVIEW
 # ============================================================
 
 with tab_overview:
@@ -748,15 +819,18 @@ with tab_overview:
                     "Other": "#A39B95",
                 },
             )
+
             fig.update_layout(
                 paper_bgcolor="#FBF9F7",
                 plot_bgcolor="#FBF9F7",
                 font_family="DM Sans",
                 font_size=12,
-                font_color="#282321",
+                font_color="#000000",
+                title_font_color="#000000",
                 margin=dict(t=65, b=20, l=15, r=15),
                 legend_title_text="",
             )
+
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No assets match the selected filters.")
@@ -780,17 +854,21 @@ with tab_overview:
                     "nameplate_capacity_mw": "Capacity (MW)",
                 },
             )
+
             fig.update_traces(marker_color="#E8392D")
+
             fig.update_layout(
                 paper_bgcolor="#FBF9F7",
                 plot_bgcolor="#FBF9F7",
                 font_family="DM Sans",
                 font_size=12,
-                font_color="#282321",
+                font_color="#000000",
+                title_font_color="#000000",
                 margin=dict(t=65, b=35, l=15, r=15),
                 xaxis_title="",
                 yaxis_title="Capacity (MW)",
             )
+
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No state capacity data is available.")
@@ -814,21 +892,25 @@ with tab_overview:
             y="Asset records",
             title="Asset records by reported lifecycle status",
         )
+
         fig.update_traces(marker_color="#E8392D")
+
         fig.update_layout(
             paper_bgcolor="#FBF9F7",
             plot_bgcolor="#FBF9F7",
             font_family="DM Sans",
             font_size=12,
-            font_color="#282321",
+            font_color="#000000",
+            title_font_color="#000000",
             xaxis_title="",
             yaxis_title="Asset records",
         )
+
         st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================
-# LOCATION EXPLORER
+# TAB 2: LOCATION EXPLORER
 # ============================================================
 
 with tab_map:
@@ -889,7 +971,7 @@ with tab_map:
             paper_bgcolor="#FBF9F7",
             font_family="DM Sans",
             font_size=12,
-            font_color="#282321",
+            font_color="#000000",
         )
 
         st.plotly_chart(fig_map, use_container_width=True)
@@ -901,7 +983,7 @@ with tab_map:
 
 
 # ============================================================
-# ASSET REGISTER
+# TAB 3: ASSET REGISTER
 # ============================================================
 
 with tab_register:
@@ -997,7 +1079,7 @@ with tab_register:
 
 
 # ============================================================
-# DATA & METHODOLOGY
+# TAB 4: DATA AND METHODOLOGY
 # ============================================================
 
 with tab_method:
