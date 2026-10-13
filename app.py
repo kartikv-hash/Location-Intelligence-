@@ -4,48 +4,59 @@ import pandas as pd
 import plotly.express as px
 
 # ============================================================
-# SUNSTRIPE INTELLIGENCE
-# Renewable Energy Location Intelligence
-# Solar | Battery Storage | Wind
+# SUNSTRIPE LOCATION INTELLIGENCE
+# Renewable Energy Asset Discovery | United States
+# Solar | BESS | Wind
 # ============================================================
 
 st.set_page_config(
-    page_title="Sunstripe Intelligence",
+    page_title="Sunstripe Location Intelligence",
     page_icon="S",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ============================================================
-# THEME AND TYPOGRAPHY
-# Black text on ivory, red accents, white text on dark header
+# BRAND AND TYPOGRAPHY
 # ============================================================
+
+BG = "#FBF9F7"
+NAVY = "#050714"
+RED = "#E8392D"
+BLACK = "#000000"
+WHITE = "#FFFFFF"
+LINE = "#E7E0DB"
+MUTED = "#000000"
+FONT = "DM Sans, Arial, sans-serif"
+
+TECH_COLORS = {
+    "Solar": "#D9A72E",
+    "Wind": "#41986A",
+    "BESS": "#3979CC",
+    "Other": "#89817B",
+}
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
 
 :root {
-    --ink: #000000;
     --navy: #050714;
     --red: #E8392D;
     --paper: #FBF9F7;
-    --white: #FFFFFF;
     --line: #E7E0DB;
-    --muted: #000000;
-    --soft: #F2EEEA;
+    --black: #000000;
+    --white: #FFFFFF;
 }
 
-/* Global typography and background */
 html, body, [class*="css"], button, input, textarea, select {
     font-family: 'DM Sans', Arial, sans-serif !important;
     -webkit-font-smoothing: antialiased;
 }
 
 .stApp {
-    background: var(--paper);
+    background: #FBF9F7;
     color: #000000 !important;
-    font-size: 14px;
 }
 
 .block-container {
@@ -62,27 +73,27 @@ header[data-testid="stHeader"] {
     background: transparent;
 }
 
-/* Force black text throughout the light main canvas */
-.stApp [data-testid="stAppViewContainer"] .main,
-.stApp [data-testid="stAppViewContainer"] .main p,
-.stApp [data-testid="stAppViewContainer"] .main label,
-.stApp [data-testid="stAppViewContainer"] .main li,
-.stApp [data-testid="stAppViewContainer"] .main small,
-.stApp [data-testid="stAppViewContainer"] .main strong,
-.stApp [data-testid="stAppViewContainer"] .main em {
+/* Main content: black text on ivory */
+[data-testid="stAppViewContainer"] .main {
+    color: #000000 !important;
+}
+
+[data-testid="stAppViewContainer"] .main p,
+[data-testid="stAppViewContainer"] .main li,
+[data-testid="stAppViewContainer"] .main label,
+[data-testid="stAppViewContainer"] .main small,
+[data-testid="stAppViewContainer"] .main strong,
+[data-testid="stAppViewContainer"] .main em {
     color: #000000;
 }
 
-/* ============================================================
-   HEADER
-   ============================================================ */
-
+/* Header */
 .topbar {
-    background: var(--navy);
+    background: #050714;
     color: #FFFFFF;
     margin: -1rem -1rem 1.7rem -1rem;
     padding: 22px 24px 15px;
-    border-bottom: 2px solid var(--red);
+    border-bottom: 2px solid #E8392D;
 }
 
 .brand {
@@ -95,14 +106,14 @@ header[data-testid="stHeader"] {
 }
 
 .brand .accent {
-    color: var(--red) !important;
+    color: #E8392D !important;
 }
 
 .brand-tagline {
     text-align: center;
     font-size: 10px;
     font-weight: 500;
-    letter-spacing: 2px;
+    letter-spacing: 1.8px;
     color: #FFFFFF !important;
     text-transform: uppercase;
     margin-top: 5px;
@@ -114,7 +125,6 @@ header[data-testid="stHeader"] {
     gap: 27px;
     flex-wrap: wrap;
     margin-top: 20px;
-    color: #FFFFFF;
     font-size: 13px;
     font-weight: 600;
 }
@@ -126,20 +136,17 @@ header[data-testid="stHeader"] {
 }
 
 .navitem.active {
-    color: var(--red) !important;
-    border-color: var(--red);
+    color: #E8392D !important;
+    border-color: #E8392D;
 }
 
-/* ============================================================
-   MAIN HEADING
-   ============================================================ */
-
+/* Main title */
 .eyebrow {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: var(--red) !important;
+    color: #E8392D !important;
     margin: 5px 0 12px;
 }
 
@@ -149,27 +156,24 @@ header[data-testid="stHeader"] {
     font-weight: 700;
     font-style: normal !important;
     line-height: 1.18;
-    letter-spacing: -1.4px;
-    color: var(--red) !important;
+    letter-spacing: -1.2px;
+    color: #E8392D !important;
     margin: 10px 0 14px;
 }
 
 .subtitle {
     font-size: 15px;
     font-weight: 400;
-    line-height: 1.75;
+    line-height: 1.7;
     color: #000000 !important;
     max-width: 900px;
     margin-bottom: 24px;
 }
 
-/* ============================================================
-   KPI CARDS
-   ============================================================ */
-
+/* KPI cards */
 .kpi-card {
-    background: rgba(255,255,255,0.7);
-    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.75);
+    border: 1px solid #E7E0DB;
     padding: 17px 18px;
     min-height: 104px;
     border-radius: 2px;
@@ -180,8 +184,8 @@ header[data-testid="stHeader"] {
     font-size: 28px;
     font-weight: 700;
     line-height: 1.25;
-    letter-spacing: -0.7px;
-    color: var(--red) !important;
+    letter-spacing: -0.5px;
+    color: #E8392D !important;
     overflow-wrap: anywhere;
 }
 
@@ -201,7 +205,7 @@ header[data-testid="stHeader"] {
 }
 
 .pill {
-    border: 1px solid var(--line);
+    border: 1px solid #E7E0DB;
     border-radius: 20px;
     padding: 7px 12px;
     background: #FFFDFA;
@@ -215,28 +219,16 @@ header[data-testid="stHeader"] {
     font-size: 16px;
     font-weight: 700;
     color: #000000 !important;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid #E7E0DB;
     padding-top: 18px;
     margin-top: 22px;
     margin-bottom: 12px;
 }
 
-.section-note {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.8px;
-    color: #000000 !important;
-    text-transform: uppercase;
-}
-
-/* ============================================================
-   STREAMLIT TABS
-   Critical fix for invisible tab labels
-   ============================================================ */
-
+/* Tabs: explicitly visible labels */
 .stTabs [data-baseweb="tab-list"] {
     gap: 25px;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid #E7E0DB;
 }
 
 .stTabs [data-baseweb="tab"] {
@@ -257,33 +249,25 @@ header[data-testid="stHeader"] {
     font-weight: 600 !important;
 }
 
-.stTabs [data-baseweb="tab"]:hover {
-    color: var(--red) !important;
-}
-
 .stTabs [aria-selected="true"],
 .stTabs [aria-selected="true"] p,
 .stTabs [aria-selected="true"] span,
 .stTabs [aria-selected="true"] div {
-    color: var(--red) !important;
-    border-bottom-color: var(--red) !important;
+    color: #E8392D !important;
+    border-bottom-color: #E8392D !important;
 }
 
-/* ============================================================
-   METRICS
-   ============================================================ */
-
+/* Metrics */
 div[data-testid="stMetric"] {
-    background: rgba(255,255,255,0.7);
-    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.75);
+    border: 1px solid #E7E0DB;
     border-radius: 2px;
     padding: 15px;
 }
 
 div[data-testid="stMetricLabel"],
 div[data-testid="stMetricLabel"] *,
-div[data-testid="stMetricDelta"],
-div[data-testid="stMetricDelta"] * {
+div[data-testid="stMetricDelta"] {
     color: #000000 !important;
 }
 
@@ -291,38 +275,31 @@ div[data-testid="stMetricValue"] {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: 27px;
     font-weight: 700;
-    color: var(--red) !important;
+    color: #E8392D !important;
 }
 
-/* ============================================================
-   BUTTONS
-   ============================================================ */
-
+/* Buttons */
 .stButton button,
 .stDownloadButton button {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: 13px;
     font-weight: 600;
     border-radius: 22px;
-    border: 1px solid var(--red);
-    color: var(--red) !important;
+    border: 1px solid #E8392D;
+    color: #E8392D !important;
     background: transparent;
-    transition: all 0.15s ease;
 }
 
 .stButton button:hover,
 .stDownloadButton button:hover {
-    background: var(--red) !important;
+    background: #E8392D !important;
     color: #FFFFFF !important;
-    border-color: var(--red);
+    border-color: #E8392D;
 }
 
-/* ============================================================
-   TABLES AND INPUTS
-   ============================================================ */
-
+/* Tables and inputs */
 div[data-testid="stDataFrame"] {
-    border: 1px solid var(--line);
+    border: 1px solid #E7E0DB;
 }
 
 div[data-testid="stDataFrame"] *,
@@ -330,18 +307,19 @@ div[data-testid="stTable"] * {
     color: #000000 !important;
 }
 
-div[data-testid="stFileUploader"] {
-    border: 1px solid var(--line);
-    padding: 10px;
-    border-radius: 4px;
+div[data-testid="stWidgetLabel"],
+div[data-testid="stWidgetLabel"] *,
+div[data-testid="stCaptionContainer"],
+div[data-testid="stCaptionContainer"] *,
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] li {
+    color: #000000 !important;
 }
 
 .stApp input,
-.stApp textarea,
-.stApp select {
-    font-family: 'DM Sans', Arial, sans-serif !important;
-    font-size: 13px;
+.stApp textarea {
     color: #000000 !important;
+    font-family: 'DM Sans', Arial, sans-serif !important;
 }
 
 .stApp input::placeholder,
@@ -350,26 +328,13 @@ div[data-testid="stFileUploader"] {
     opacity: 0.7;
 }
 
-div[data-testid="stWidgetLabel"],
-div[data-testid="stWidgetLabel"] *,
-.stApp [data-testid="stCaptionContainer"],
-.stApp [data-testid="stCaptionContainer"] p,
-.stApp [data-testid="stMarkdownContainer"] p,
-.stApp [data-testid="stMarkdownContainer"] li {
-    color: #000000 !important;
-}
-
 hr {
-    border-color: var(--line);
+    border-color: #E7E0DB;
 }
 
-/* ============================================================
-   SIDEBAR
-   Keep the sidebar dark with white text
-   ============================================================ */
-
+/* Sidebar: white typography on midnight black */
 section[data-testid="stSidebar"] {
-    background: var(--navy);
+    background: #050714;
     border-right: 1px solid #272936;
 }
 
@@ -390,20 +355,17 @@ section[data-testid="stSidebar"] hr {
 }
 
 section[data-testid="stSidebar"] input {
-    color: #000000 !important;
     background: #FFFFFF !important;
+    color: #000000 !important;
 }
 
-/* ============================================================
-   FOOTER
-   ============================================================ */
-
+/* Footer */
 .footer {
     text-align: center;
     color: #000000 !important;
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 1.1px;
+    letter-spacing: 1px;
     padding: 10px 0;
 }
 
@@ -423,7 +385,7 @@ section[data-testid="stSidebar"] input {
 
     .hero {
         font-size: 32px;
-        letter-spacing: -0.8px;
+        letter-spacing: -0.7px;
     }
 
     .subtitle {
@@ -435,37 +397,84 @@ section[data-testid="stSidebar"] input {
 
 
 # ============================================================
-# HEADER
+# UNIVERSAL PLOTLY THEME
+# Apply this function to EVERY chart before displaying it.
+# This fixes the pale legend, axes, and chart title problem.
 # ============================================================
 
-st.markdown("""
-<div class="topbar">
-    <div class="brand">
-        Sunstripe <span class="accent">Intelligence</span>
-    </div>
-    <div class="brand-tagline">
-        Intelligence Platform for Energy Infrastructure
-    </div>
-    <div class="navrow">
-        <span class="navitem active">ASSETS</span>
-        <span class="navitem">GRID</span>
-        <span class="navitem">SCREENING</span>
-        <span class="navitem">MARKETS</span>
-        <span class="navitem">RESEARCH</span>
-        <span class="navitem">ABOUT</span>
-    </div>
-</div>
+def style_chart(fig):
+    fig.update_layout(
+        template="plotly_white",
+        font=dict(
+            family=FONT,
+            size=13,
+            color=BLACK,
+        ),
+        title=dict(
+            font=dict(
+                family=FONT,
+                size=16,
+                color=BLACK,
+            ),
+            x=0,
+            xanchor="left",
+        ),
+        legend=dict(
+            font=dict(
+                family=FONT,
+                size=12,
+                color=BLACK,
+            ),
+            title=dict(
+                font=dict(
+                    family=FONT,
+                    size=12,
+                    color=BLACK,
+                )
+            ),
+            bgcolor="rgba(251,249,247,0)",
+        ),
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        margin=dict(t=65, b=40, l=45, r=25),
+        coloraxis_colorbar=dict(
+            tickfont=dict(color=BLACK, family=FONT, size=12),
+            title_font=dict(color=BLACK, family=FONT, size=12),
+        ),
+        hoverlabel=dict(
+            bgcolor=WHITE,
+            font=dict(
+                family=FONT,
+                size=12,
+                color=BLACK,
+            ),
+            bordercolor=LINE,
+        ),
+    )
 
-<div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
+    fig.update_xaxes(
+        title_font=dict(family=FONT, size=12, color=BLACK),
+        tickfont=dict(family=FONT, size=12, color=BLACK),
+        automargin=True,
+        showline=True,
+        linecolor=LINE,
+        linewidth=1,
+        showgrid=False,
+        zeroline=False,
+    )
 
-<div class="hero">Find the right place to build.</div>
+    fig.update_yaxes(
+        title_font=dict(family=FONT, size=12, color=BLACK),
+        tickfont=dict(family=FONT, size=12, color=BLACK),
+        automargin=True,
+        showline=False,
+        showgrid=True,
+        gridcolor="#E8E1DC",
+        gridwidth=1,
+        zeroline=False,
+    )
 
-<div class="subtitle">
-A unified intelligence workspace for renewable energy asset discovery,
-location screening and portfolio analysis. Explore Solar, Battery Energy
-Storage and Wind assets across the United States.
-</div>
-""", unsafe_allow_html=True)
+    return fig
 
 
 # ============================================================
@@ -479,7 +488,7 @@ def load_repository_csv():
 
 with st.sidebar:
     st.markdown("## Sunstripe")
-    st.caption("INTELLIGENCE PLATFORM")
+    st.caption("LOCATION INTELLIGENCE PLATFORM")
     st.divider()
 
     st.markdown("### Data source")
@@ -500,7 +509,7 @@ if uploaded_file is not None:
         assets = pd.read_csv(uploaded_file)
         data_message = "Uploaded CSV loaded successfully."
     except Exception as exc:
-        st.error(f"Could not read the uploaded CSV: {exc}")
+        st.error(f"Could not read uploaded CSV: {exc}")
         st.stop()
 else:
     try:
@@ -508,17 +517,17 @@ else:
         data_message = "Repository CSV loaded successfully."
     except FileNotFoundError:
         st.error(
-            "renewable_asset_register.csv was not found. Add it to the "
-            "repository root or upload it using the sidebar."
+            "renewable_asset_register.csv was not found. Add the file "
+            "to your repository root or upload it using the sidebar."
         )
         st.stop()
     except Exception as exc:
-        st.error(f"Could not load the repository CSV: {exc}")
+        st.error(f"Could not load repository CSV: {exc}")
         st.stop()
 
 
 # ============================================================
-# STANDARDIZE COLUMNS
+# NORMALIZE COLUMNS
 # ============================================================
 
 assets.columns = [
@@ -526,7 +535,7 @@ assets.columns = [
     for column in assets.columns
 ]
 
-aliases = {
+ALIASES = {
     "technology_group": [
         "technology_group", "technology", "energy_type", "fuel_type"
     ],
@@ -541,8 +550,10 @@ aliases = {
         "nameplate_capacity_mw", "capacity_mw", "nameplate_mw", "mw"
     ],
     "nameplate_energy_capacity_mwh": [
-        "nameplate_energy_capacity_mwh", "energy_capacity_mwh",
-        "storage_capacity_mwh", "mwh"
+        "nameplate_energy_capacity_mwh",
+        "energy_capacity_mwh",
+        "storage_capacity_mwh",
+        "mwh",
     ],
     "lifecycle_group": [
         "lifecycle_group", "status", "project_status", "operational_status"
@@ -550,14 +561,14 @@ aliases = {
     "source_year": ["source_year", "year"],
 }
 
-for standard, alternatives in aliases.items():
-    if standard not in assets.columns:
+for standard_name, alternatives in ALIASES.items():
+    if standard_name not in assets.columns:
         for alternative in alternatives:
             if alternative in assets.columns:
-                assets[standard] = assets[alternative]
+                assets[standard_name] = assets[alternative]
                 break
 
-defaults = {
+DEFAULTS = {
     "technology_group": "Unknown",
     "plant_name": "Unnamed asset",
     "state": "Unknown",
@@ -570,7 +581,7 @@ defaults = {
     "source_year": None,
 }
 
-for column, default in defaults.items():
+for column, default in DEFAULTS.items():
     if column not in assets.columns:
         assets[column] = default
 
@@ -585,6 +596,7 @@ for column in [
 assets["nameplate_capacity_mw"] = (
     assets["nameplate_capacity_mw"].fillna(0)
 )
+
 assets["nameplate_energy_capacity_mwh"] = (
     assets["nameplate_energy_capacity_mwh"].fillna(0)
 )
@@ -604,14 +616,15 @@ for column in [
 def classify_technology(value):
     value = str(value).strip().lower()
 
-    if any(word in value for word in ["solar", "photovoltaic"]):
+    if "solar" in value or "photovoltaic" in value or value == "pv":
         return "Solar"
-    if value == "pv":
-        return "Solar"
+
     if "wind" in value:
         return "Wind"
-    if any(word in value for word in ["battery", "storage", "bess"]):
+
+    if "battery" in value or "storage" in value or "bess" in value:
         return "BESS"
+
     return "Other"
 
 
@@ -628,42 +641,42 @@ assets["asset_record_id"] = assets.index + 1
 # ============================================================
 
 with st.sidebar:
-    technologies = sorted(
+    available_technologies = sorted(
         assets["technology_display"].dropna().unique().tolist()
     )
 
     selected_technologies = st.multiselect(
         "Technology",
-        options=technologies,
-        default=technologies,
+        options=available_technologies,
+        default=available_technologies,
     )
 
-    states = sorted(assets["state"].dropna().unique().tolist())
+    available_states = sorted(
+        assets["state"].dropna().unique().tolist()
+    )
 
     selected_states = st.multiselect(
         "State",
-        options=states,
+        options=available_states,
         default=[],
         help="Leave empty to include all states.",
     )
 
-    statuses = sorted(
+    available_statuses = sorted(
         assets["lifecycle_group"].dropna().unique().tolist()
     )
 
     selected_statuses = st.multiselect(
         "Lifecycle / status",
-        options=statuses,
-        default=statuses,
+        options=available_statuses,
+        default=available_statuses,
     )
 
     min_capacity = max(
-        0.0,
-        float(assets["nameplate_capacity_mw"].min())
+        0.0, float(assets["nameplate_capacity_mw"].min())
     )
     max_capacity = max(
-        min_capacity,
-        float(assets["nameplate_capacity_mw"].max())
+        min_capacity, float(assets["nameplate_capacity_mw"].max())
     )
 
     if max_capacity > min_capacity:
@@ -677,8 +690,7 @@ with st.sidebar:
         capacity_range = (min_capacity, max_capacity)
 
     st.divider()
-    st.caption("SUNSTRIPE INTELLIGENCE")
-    st.caption("Renewable energy asset screening")
+    st.caption("SUNSTRIPE LOCATION INTELLIGENCE")
 
 
 # ============================================================
@@ -703,7 +715,38 @@ filtered_assets = filtered_assets[
 
 
 # ============================================================
-# EXECUTIVE SUMMARY
+# BRAND HEADER
+# ============================================================
+
+st.markdown("""
+<div class="topbar">
+    <div class="brand">
+        Sunstripe <span class="accent">Location Intelligence</span>
+    </div>
+    <div class="brand-tagline">
+        Intelligence Platform for Energy Infrastructure
+    </div>
+    <div class="navrow">
+        <span class="navitem active">ASSETS</span>
+        <span class="navitem">GRID</span>
+        <span class="navitem">SCREENING</span>
+        <span class="navitem">MARKETS</span>
+        <span class="navitem">RESEARCH</span>
+        <span class="navitem">ABOUT</span>
+    </div>
+</div>
+<div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
+<div class="hero">Find the right place to build.</div>
+<div class="subtitle">
+Explore renewable energy assets across the United States. Filter by technology,
+state and capacity, inspect reported geographic locations, and review the
+portfolio through consistent, readable analytics.
+</div>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
+# KPI SUMMARY
 # ============================================================
 
 total_records = len(filtered_assets)
@@ -727,33 +770,33 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown(
-        f'<div class="kpi-card">'
-        f'<div class="kpi-value">{total_records:,}</div>'
-        f'<div class="kpi-label">Asset records in view</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">'
+        f'{total_records:,}</div><div class="kpi-label">'
+        'Asset records in view</div></div>',
         unsafe_allow_html=True,
     )
 
 with c2:
     st.markdown(
-        f'<div class="kpi-card">'
-        f'<div class="kpi-value">{total_capacity:,.1f} MW</div>'
-        f'<div class="kpi-label">Represented power capacity</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">'
+        f'{total_capacity:,.1f} MW</div><div class="kpi-label">'
+        'Represented power capacity</div></div>',
         unsafe_allow_html=True,
     )
 
 with c3:
     st.markdown(
-        f'<div class="kpi-card">'
-        f'<div class="kpi-value">{total_storage:,.1f} MWh</div>'
-        f'<div class="kpi-label">Represented storage energy</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">'
+        f'{total_storage:,.1f} MWh</div><div class="kpi-label">'
+        'Represented storage energy</div></div>',
         unsafe_allow_html=True,
     )
 
 with c4:
     st.markdown(
-        f'<div class="kpi-card">'
-        f'<div class="kpi-value">{states_covered:,}</div>'
-        f'<div class="kpi-label">States represented</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">'
+        f'{states_covered:,}</div><div class="kpi-label">'
+        'States represented</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -773,7 +816,7 @@ st.caption(
 
 
 # ============================================================
-# WORKSPACE TABS
+# TABS
 # ============================================================
 
 tab_overview, tab_map, tab_register, tab_method = st.tabs([
@@ -809,28 +852,35 @@ with tab_overview:
                 tech_counts,
                 names="Technology",
                 values="Asset records",
-                hole=0.60,
+                hole=0.58,
                 title="Asset records by technology",
                 color="Technology",
-                color_discrete_map={
-                    "Solar": "#D9A72E",
-                    "Wind": "#41986A",
-                    "BESS": "#3979CC",
-                    "Other": "#A39B95",
+                color_discrete_map=TECH_COLORS,
+                labels={
+                    "technology_display": "Technology",
+                    "Asset records": "Asset records",
                 },
             )
 
-            fig.update_layout(
-                paper_bgcolor="#FBF9F7",
-                plot_bgcolor="#FBF9F7",
-                font_family="DM Sans",
-                font_size=12,
-                font_color="#000000",
-                title_font_color="#000000",
-                margin=dict(t=65, b=20, l=15, r=15),
-                legend_title_text="",
+            fig.update_traces(
+                textposition="inside",
+                textinfo="percent",
+                textfont=dict(
+                    family=FONT,
+                    size=12,
+                    color=BLACK,
+                ),
+                marker=dict(
+                    line=dict(color=BG, width=2)
+                ),
+                hovertemplate=(
+                    "<b>%{label}</b><br>"
+                    "Records: %{value:,}<br>"
+                    "Share: %{percent}<extra></extra>"
+                ),
             )
 
+            fig = style_chart(fig)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No assets match the selected filters.")
@@ -853,22 +903,31 @@ with tab_overview:
                     "state": "State",
                     "nameplate_capacity_mw": "Capacity (MW)",
                 },
+                text="nameplate_capacity_mw",
             )
 
-            fig.update_traces(marker_color="#E8392D")
-
-            fig.update_layout(
-                paper_bgcolor="#FBF9F7",
-                plot_bgcolor="#FBF9F7",
-                font_family="DM Sans",
-                font_size=12,
-                font_color="#000000",
-                title_font_color="#000000",
-                margin=dict(t=65, b=35, l=15, r=15),
-                xaxis_title="",
-                yaxis_title="Capacity (MW)",
+            fig.update_traces(
+                marker_color=RED,
+                marker_line_width=0,
+                texttemplate="%{text:,.0f}",
+                textposition="outside",
+                textfont=dict(
+                    family=FONT,
+                    size=10,
+                    color=BLACK,
+                ),
+                cliponaxis=False,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Capacity: %{y:,.1f} MW<extra></extra>"
+                ),
             )
 
+            fig = style_chart(fig)
+            fig.update_yaxes(
+                rangemode="tozero",
+                title_text="Capacity (MW)",
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No state capacity data is available.")
@@ -891,21 +950,18 @@ with tab_overview:
             x="Lifecycle / status",
             y="Asset records",
             title="Asset records by reported lifecycle status",
+            text="Asset records",
         )
 
-        fig.update_traces(marker_color="#E8392D")
-
-        fig.update_layout(
-            paper_bgcolor="#FBF9F7",
-            plot_bgcolor="#FBF9F7",
-            font_family="DM Sans",
-            font_size=12,
-            font_color="#000000",
-            title_font_color="#000000",
-            xaxis_title="",
-            yaxis_title="Asset records",
+        fig.update_traces(
+            marker_color=RED,
+            texttemplate="%{text:,}",
+            textposition="outside",
+            textfont=dict(family=FONT, size=11, color=BLACK),
+            cliponaxis=False,
         )
 
+        fig = style_chart(fig)
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -920,8 +976,8 @@ with tab_map:
     )
 
     st.caption(
-        "Explore reported asset locations. Coordinates do not establish "
-        "parcel boundaries or buildable land."
+        "Explore reported locations. Coordinates do not establish parcel "
+        "boundaries, buildable acreage or interconnection feasibility."
     )
 
     map_data = filtered_assets.dropna(
@@ -952,12 +1008,7 @@ with tab_map:
             zoom=3,
             height=610,
             map_style="open-street-map",
-            color_discrete_map={
-                "Solar": "#D9A72E",
-                "Wind": "#41986A",
-                "BESS": "#3979CC",
-                "Other": "#8D8580",
-            },
+            color_discrete_map=TECH_COLORS,
             labels={
                 "technology_display": "Technology",
                 "nameplate_capacity_mw": "Capacity (MW)",
@@ -966,12 +1017,17 @@ with tab_map:
             },
         )
 
+        # Apply consistent typography to map legends and hover labels.
         fig_map.update_layout(
-            margin=dict(t=10, b=10, l=10, r=10),
-            paper_bgcolor="#FBF9F7",
-            font_family="DM Sans",
-            font_size=12,
-            font_color="#000000",
+            font=dict(family=FONT, size=13, color=BLACK),
+            title_font=dict(family=FONT, size=16, color=BLACK),
+            legend=dict(
+                font=dict(family=FONT, size=12, color=BLACK),
+                title=dict(font=dict(family=FONT, size=12, color=BLACK)),
+                bgcolor="rgba(251,249,247,0.92)",
+            ),
+            paper_bgcolor=BG,
+            margin=dict(t=12, b=12, l=12, r=12),
         )
 
         st.plotly_chart(fig_map, use_container_width=True)
@@ -998,12 +1054,8 @@ with tab_register:
     )
 
     search_columns = [
-        "plant_name",
-        "state",
-        "county",
-        "technology_group",
-        "technology_display",
-        "lifecycle_group",
+        "plant_name", "state", "county",
+        "technology_group", "technology_display", "lifecycle_group",
     ]
 
     search_results = filtered_assets.copy()
@@ -1089,25 +1141,25 @@ with tab_method:
     )
 
     st.markdown("""
-    **Default data source**
+**Default data source**
 
-    `renewable_asset_register.csv` in the repository root. Alternatively,
-    upload a CSV through the sidebar.
+`renewable_asset_register.csv` in the repository root. Alternatively,
+upload a CSV through the sidebar.
 
-    **Recognized input fields**
+**Recognized input fields**
 
-    | Field | Purpose |
-    |---|---|
-    | `plant_name` / `project_name` | Asset or project name |
-    | `technology_group` / `technology` | Technology |
-    | `state` | State |
-    | `county` | County |
-    | `latitude` / `longitude` | Geographic coordinates |
-    | `nameplate_capacity_mw` / `capacity_mw` | Power capacity in MW |
-    | `nameplate_energy_capacity_mwh` / `energy_capacity_mwh` | Energy capacity in MWh |
-    | `lifecycle_group` / `status` | Reported asset status |
-    | `source_year` / `year` | Source year |
-    """)
+| Field | Purpose |
+|---|---|
+| `plant_name` / `project_name` | Asset or project name |
+| `technology_group` / `technology` | Technology |
+| `state` | State |
+| `county` | County |
+| `latitude` / `longitude` | Geographic coordinates |
+| `nameplate_capacity_mw` / `capacity_mw` | Power capacity in MW |
+| `nameplate_energy_capacity_mwh` / `energy_capacity_mwh` | Storage energy in MWh |
+| `lifecycle_group` / `status` | Reported asset status |
+| `source_year` / `year` | Source year |
+""")
 
     st.markdown(
         '<div class="section-title">Recommended authoritative sources</div>',
@@ -1179,15 +1231,14 @@ with tab_method:
     )
 
     st.markdown("""
-    - The platform analyzes the provided CSV and does not independently
-      verify every asset record.
-    - A point location is not a parcel boundary or buildable-area assessment.
-    - MW is power capacity; MWh is energy capacity.
-    - External sources listed here are references, not active data integrations.
-    - Interconnection capacity, land ownership, permitting, environmental
-      constraints, resource quality and market economics require additional
-      verified datasets and dedicated analysis.
-    """)
+- The platform analyzes the supplied CSV and does not independently verify every record.
+- Asset coordinates do not establish parcel boundaries or available acreage.
+- MW measures power capacity; MWh measures energy capacity.
+- External sources listed here are references, not active data integrations.
+- Land value, parcel ownership, interconnection capacity, resource quality,
+  permitting, environmental constraints and market economics need additional
+  verified datasets and dedicated analysis.
+""")
 
 
 # ============================================================
@@ -1198,8 +1249,6 @@ st.divider()
 
 st.markdown("""
 <div class="footer">
-    SUNSTRIPE INTELLIGENCE &nbsp; · &nbsp;
-    ENERGY INFRASTRUCTURE &nbsp; · &nbsp;
-    SOLAR / STORAGE / WIND
+    SUNSTRIPE LOCATION INTELLIGENCE · ENERGY INFRASTRUCTURE · SOLAR / STORAGE / WIND
 </div>
 """, unsafe_allow_html=True)
