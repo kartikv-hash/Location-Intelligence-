@@ -11,7 +11,7 @@ import streamlit as st
 
 # ============================================================
 # SUNSTRIPE LOCATION INTELLIGENCE
-# US Solar | Wind | Battery Energy Storage Systems
+# Solar | Wind | Battery Energy Storage Systems
 # ============================================================
 
 st.set_page_config(
@@ -20,8 +20,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# -------------------- BRAND SETTINGS --------------------
 
 BG = "#FBF9F7"
 NAVY = "#050714"
@@ -39,12 +37,11 @@ TECH_COLORS = {
 }
 
 EIA_PAGE = "https://www.eia.gov/electricity/data/eia860m/index.php"
-
 MAX_UPLOAD_MB = 50
 
 
 # ============================================================
-# SUNSTRIPE THEME
+# SUNSTRIPE BRAND THEME
 # ============================================================
 
 st.markdown("""
@@ -75,7 +72,7 @@ header[data-testid="stHeader"] {
     background: transparent;
 }
 
-/* Main content text */
+/* Black typography on the main ivory background */
 [data-testid="stAppViewContainer"] .main p,
 [data-testid="stAppViewContainer"] .main label,
 [data-testid="stAppViewContainer"] .main li,
@@ -94,6 +91,7 @@ header[data-testid="stHeader"] {
 }
 
 .brand {
+    font-family: 'DM Sans', Arial, sans-serif !important;
     text-align: center;
     font-size: 25px;
     font-weight: 700;
@@ -136,7 +134,7 @@ header[data-testid="stHeader"] {
     border-color: #E8392D;
 }
 
-/* Editorial header */
+/* Editorial heading */
 .eyebrow {
     font-size: 11px;
     font-weight: 700;
@@ -150,7 +148,7 @@ header[data-testid="stHeader"] {
     font-family: 'DM Sans', Arial, sans-serif !important;
     font-size: clamp(32px, 3.4vw, 43px);
     font-weight: 700;
-    font-style: normal;
+    font-style: normal !important;
     line-height: 1.18;
     letter-spacing: -1.2px;
     color: #E8392D !important;
@@ -166,7 +164,7 @@ header[data-testid="stHeader"] {
     margin-bottom: 24px;
 }
 
-/* KPI cards */
+/* KPIs */
 .kpi-card {
     background: rgba(255,255,255,0.75);
     border: 1px solid #E7E0DB;
@@ -246,7 +244,7 @@ header[data-testid="stHeader"] {
     color: #E8392D !important;
 }
 
-/* Streamlit metrics */
+/* Metrics */
 div[data-testid="stMetric"] {
     background: rgba(255,255,255,0.75);
     border: 1px solid #E7E0DB;
@@ -284,7 +282,7 @@ div[data-testid="stMetricValue"] {
     color: #FFFFFF !important;
 }
 
-/* Text, captions and tables */
+/* Tables, captions, labels */
 div[data-testid="stCaptionContainer"],
 div[data-testid="stCaptionContainer"] *,
 div[data-testid="stWidgetLabel"],
@@ -298,8 +296,7 @@ div[data-testid="stDataFrame"] {
     border: 1px solid #E7E0DB;
 }
 
-.stApp input,
-.stApp textarea {
+.stApp input, .stApp textarea {
     font-family: 'DM Sans', Arial, sans-serif !important;
     color: #000000 !important;
 }
@@ -348,6 +345,13 @@ section[data-testid="stSidebar"] input {
     font-weight: 600;
     letter-spacing: 1px;
     padding: 10px 0;
+}
+
+@media (max-width: 768px) {
+    .brand { font-size: 22px; }
+    .navrow { gap: 14px; font-size: 12px; }
+    .hero { font-size: 32px; letter-spacing: -0.7px; }
+    .subtitle { font-size: 14px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -399,24 +403,225 @@ def style_chart(fig):
         gridcolor=LINE,
         zeroline=False,
     )
+
     return fig
 
 
 # ============================================================
-# FILE VALIDATION
+# DATA LOADING HELPERS
 # ============================================================
 
 def check_upload_size(upload):
     if upload is not None and upload.size > MAX_UPLOAD_MB * 1024 * 1024:
-        raise ValueError(
-            f"File exceeds the {MAX_UPLOAD_MB} MB upload limit."
+        raise ValueError(f"Please keep uploads below {MAX_UPLOAD_MB} MB.")
+
+
+@st.cache_data
+def load_repository_csv():
+    return pd.read_csv("renewable_asset_register.csv")
+
+
+def normalize_column_key(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+
+def standardize_assets(df, source_name, source_url=""):
+    """
+    Preserve original columns while standardizing common project fields.
+    """
+
+    df = df.copy()
+    df.columns = [
+        str(c).strip().replace("\n", " ")
+        for c in df.columns
+    ]
+
+    lookup = {}
+    for col in df.columns:
+        lookup.setdefault(normalize_column_key(col), col)
+
+    aliases = {
+        "plant_name": [
+            "plant name", "plant_name", "project name",
+            "facility name", "name",
+        ],
+        "state": [
+            "plant state", "state", "state name",
+            "plant state abbreviation",
+        ],
+        "county": ["county", "plant county", "county name"],
+        "plant_code": ["plant code", "plant id", "plant_id"],
+        "generator_id": ["generator id", "generator"],
+        "entity_name": [
+            "entity name", "utility name", "operator", "owner",
+        ],
+        "entity_id": ["entity id", "utility id"],
+        "producer_type": ["plant producer type", "producer type"],
+        "technology_group": [
+            "technology", "technology type", "technology group",
+            "technology_group", "energy type", "fuel type",
+        ],
+        "energy_source_code": ["energy source code", "energy source"],
+        "prime_mover_code": ["prime mover code", "prime mover"],
+        "nameplate_capacity_mw": [
+            "nameplate capacity (mw)", "nameplate capacity mw",
+            "nameplate_capacity_mw", "capacity (mw)", "capacity_mw",
+            "nameplate mw", "mw",
+        ],
+        "net_summer_capacity_mw": [
+            "net summer capacity (mw)", "net summer capacity mw",
+        ],
+        "energy_capacity_mwh": [
+            "energy capacity mwh", "energy_capacity_mwh",
+            "storage capacity mwh", "nameplate energy capacity mwh",
+        ],
+        "status": [
+            "status", "operating status", "lifecycle status",
+            "lifecycle group", "lifecycle_group", "project status",
+        ],
+        "operating_year": ["operating year"],
+        "operating_month": ["operating month"],
+        "planned_operating_year": ["planned operating year", "planned year"],
+        "planned_operating_month": ["planned operating month", "planned month"],
+        "latitude": [
+            "plant latitude", "latitude", "plant_latitude", "lat",
+        ],
+        "longitude": [
+            "plant longitude", "longitude", "plant_longitude", "lon", "lng",
+        ],
+    }
+
+    for standard, candidates in aliases.items():
+        if standard not in df.columns:
+            for candidate in candidates:
+                found = lookup.get(normalize_column_key(candidate))
+                if found is not None:
+                    df[standard] = df[found]
+                    break
+
+    defaults = {
+        "plant_name": "Unnamed asset",
+        "state": "Unknown",
+        "county": "Unknown",
+        "plant_code": None,
+        "generator_id": None,
+        "entity_name": "Not reported",
+        "entity_id": None,
+        "producer_type": "Not reported",
+        "technology_group": "Unknown",
+        "energy_source_code": "",
+        "prime_mover_code": "",
+        "nameplate_capacity_mw": None,
+        "net_summer_capacity_mw": None,
+        "energy_capacity_mwh": None,
+        "status": "Not reported",
+        "operating_year": None,
+        "operating_month": None,
+        "planned_operating_year": None,
+        "planned_operating_month": None,
+        "latitude": None,
+        "longitude": None,
+    }
+
+    for col, default in defaults.items():
+        if col not in df.columns:
+            df[col] = default
+
+    numeric_columns = [
+        "nameplate_capacity_mw",
+        "net_summer_capacity_mw",
+        "energy_capacity_mwh",
+        "latitude",
+        "longitude",
+        "operating_year",
+        "operating_month",
+        "planned_operating_year",
+        "planned_operating_month",
+    ]
+
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    for col in [
+        "plant_name", "state", "county", "entity_name",
+        "technology_group", "status",
+    ]:
+        df[col] = df[col].fillna("Unknown").astype(str).str.strip()
+
+    tech = df["technology_group"].fillna("").astype(str).str.lower()
+    energy = df["energy_source_code"].fillna("").astype(str).str.lower()
+    mover = df["prime_mover_code"].fillna("").astype(str).str.lower()
+
+    # EIA classification plus common CSV labels.
+    is_bess = (
+        tech.str.contains(r"battery|storage|bess", regex=True)
+        | mover.str.fullmatch("ba", na=False)
+        | energy.str.fullmatch("mwh", na=False)
+    )
+
+    is_wind = (
+        tech.str.contains("wind", na=False)
+        | energy.str.fullmatch("wnd", na=False)
+        | energy.str.fullmatch("wds", na=False)
+    )
+
+    is_solar = (
+        tech.str.contains(r"solar|photovoltaic|concentrat", regex=True)
+        | energy.str.fullmatch("sun", na=False)
+        | mover.str.fullmatch("pv", na=False)
+    )
+
+    df["technology_display"] = "Other"
+    df.loc[is_solar, "technology_display"] = "Solar"
+    df.loc[is_wind, "technology_display"] = "Wind"
+    df.loc[is_bess, "technology_display"] = "BESS"
+
+    # Support pre-classified repository datasets.
+    if "technology_display" in lookup.values():
+        original_display = next(
+            c for c in df.columns
+            if normalize_column_key(c) == "technologydisplay"
         )
+        mapped_display = df[original_display].astype(str).str.strip().str.title()
+        df.loc[mapped_display.isin(["Solar", "Wind", "Bess"]), "technology_display"] = (
+            mapped_display[mapped_display.isin(["Solar", "Wind", "Bess"])]
+            .replace({"Bess": "BESS"})
+        )
+
+    df["source_dataset"] = source_name
+    df["source_url"] = source_url or ""
+    df = df.reset_index(drop=True)
+
+    plant = df["plant_code"].fillna("").astype(str)
+    generator = df["generator_id"].fillna("").astype(str)
+
+    df["record_id"] = [
+        f"{plant.iloc[i]}-{generator.iloc[i]}-{i}"
+        for i in range(len(df))
+    ]
+
+    return df
+
+
+def load_user_file(upload):
+    check_upload_size(upload)
+    name = upload.name.lower()
+
+    if name.endswith(".csv"):
+        raw = pd.read_csv(upload)
+    elif name.endswith(".xlsx"):
+        raw = pd.read_excel(upload, engine="openpyxl")
+    elif name.endswith(".xls"):
+        raw = pd.read_excel(upload, engine="xlrd")
+    else:
+        raise ValueError("Unsupported file type. Use CSV, XLS or XLSX.")
+
+    return standardize_assets(raw, f"Uploaded: {upload.name}")
 
 
 # ============================================================
-# EIA MONTHLY INVENTORY CONNECTOR
-# Supports genuine XLS and XLSX workbooks.
-# Validates file signatures before parsing.
+# OPTIONAL EIA CONNECTOR
+# This is NOT called unless selected by the user.
 # ============================================================
 
 @st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
@@ -427,96 +632,82 @@ def download_eia_inventory():
         "Referer": EIA_PAGE,
     }
 
-    page_response = requests.get(
-        EIA_PAGE,
-        headers=headers,
-        timeout=30,
-    )
-    page_response.raise_for_status()
+    page = requests.get(EIA_PAGE, headers=headers, timeout=20)
+    page.raise_for_status()
 
-    links = re.findall(
+    # EIA links can point to legacy XLS or modern XLSX workbooks.
+    hrefs = re.findall(
         r"""href\s*=\s*["']([^"']+\.(?:xlsx|xls)(?:\?[^"']*)?)["']""",
-        page_response.text,
+        page.text,
         flags=re.IGNORECASE,
     )
 
-    workbook_links = []
+    candidates = []
+    for href in hrefs:
+        url = urljoin(EIA_PAGE, href)
+        if "generator" in url.lower() and url not in candidates:
+            candidates.append(url)
 
-    for link in links:
-        url = urljoin(EIA_PAGE, link)
-        lower_url = url.lower()
-
-        if "generator" in lower_url and url not in workbook_links:
-            workbook_links.append(url)
-
-    if not workbook_links:
+    if not candidates:
         raise RuntimeError(
-            "Could not detect generator workbook links on the EIA page. "
-            "Use the manual workbook or CSV upload option."
+            "No generator Excel links were found on the EIA page."
         )
 
     errors = []
 
-    # The EIA page normally lists the latest report first.
-    for workbook_url in workbook_links[:8]:
+    for url in candidates[:6]:
         try:
             response = requests.get(
-                workbook_url,
+                url,
                 headers=headers,
-                timeout=90,
+                timeout=40,
             )
             response.raise_for_status()
-
             content = response.content
 
             if not content:
-                raise ValueError("The response was empty.")
+                raise ValueError("Empty download.")
 
-            # XLSX is ZIP-based; XLS has an OLE signature.
-            if content.startswith(b"PK\x03\x04"):
-                engine = "openpyxl"
+            # Try format detection and actual workbook parsing.
+            engines = []
+            if content.startswith(b"PK"):
+                engines.append("openpyxl")
             elif content.startswith(bytes.fromhex("D0CF11E0A1B11AE1")):
-                engine = "xlrd"
+                engines.append("xlrd")
             else:
-                content_type = response.headers.get(
-                    "Content-Type", "unknown"
-                )
-                preview = content[:100].decode(
-                    "utf-8", errors="replace"
-                ).replace("\n", " ")
+                # Some servers return a workbook with unexpected headers.
+                engines = ["xlrd", "openpyxl"]
 
-                raise ValueError(
-                    "Downloaded response is not a recognized Excel file. "
-                    f"Content-Type: {content_type}; "
-                    f"response starts with: {preview[:80]}"
-                )
+            last_error = None
 
-            # Test the workbook before returning it.
-            pd.ExcelFile(
-                io.BytesIO(content),
-                engine=engine,
+            for engine in engines:
+                try:
+                    pd.ExcelFile(io.BytesIO(content), engine=engine)
+                    return content, url, engine
+                except Exception as exc:
+                    last_error = exc
+
+            raise ValueError(
+                f"Download is not a readable Excel workbook. "
+                f"Content-Type={response.headers.get('Content-Type')}; "
+                f"parser error={last_error}"
             )
-
-            return content, workbook_url, engine
 
         except Exception as exc:
-            errors.append(
-                f"{workbook_url}: {type(exc).__name__}: {exc}"
-            )
+            errors.append(f"{url}: {type(exc).__name__}: {exc}")
 
     raise RuntimeError(
-        "Unable to retrieve and open a recent EIA workbook.\n\n"
+        "Could not download and parse the recent EIA workbooks.\n"
         + "\n".join(errors)
     )
 
 
-# ============================================================
-# READ EIA WORKBOOK
-# ============================================================
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def load_eia_assets():
+    content, workbook_url, engine = download_eia_inventory()
 
-def read_eia_workbook(workbook_bytes, engine):
     excel = pd.ExcelFile(
-        io.BytesIO(workbook_bytes),
+        io.BytesIO(content),
         engine=engine,
     )
 
@@ -524,7 +715,7 @@ def read_eia_workbook(workbook_bytes, engine):
 
     for sheet in excel.sheet_names:
         raw = pd.read_excel(
-            io.BytesIO(workbook_bytes),
+            io.BytesIO(content),
             sheet_name=sheet,
             header=None,
             engine=engine,
@@ -535,17 +726,15 @@ def read_eia_workbook(workbook_bytes, engine):
 
         header_row = None
 
-        for i in range(min(50, len(raw))):
+        for i in range(min(40, len(raw))):
             values = [
-                re.sub(
-                    r"\s+", " ", str(value)
-                ).strip().lower()
-                for value in raw.iloc[i].tolist()
-                if pd.notna(value)
+                normalize_column_key(v)
+                for v in raw.iloc[i].tolist()
+                if pd.notna(v)
             ]
 
-            has_plant = any("plant name" in v for v in values)
-            has_generator = any("generator id" in v for v in values)
+            has_plant = any("plantname" in v for v in values)
+            has_generator = any("generatorid" in v for v in values)
             has_technology = any("technology" in v for v in values)
             has_capacity = any("capacity" in v for v in values)
 
@@ -559,21 +748,19 @@ def read_eia_workbook(workbook_bytes, engine):
             continue
 
         headers = [
-            str(value).strip() if pd.notna(value)
-            else f"unnamed_{i}"
-            for i, value in enumerate(raw.iloc[header_row].tolist())
+            str(v).strip() if pd.notna(v) else f"unnamed_{j}"
+            for j, v in enumerate(raw.iloc[header_row].tolist())
         ]
 
         df = raw.iloc[header_row + 1:].copy()
         df.columns = headers
         df = df.dropna(how="all")
-
         df = df[
             [
                 c for c in df.columns
                 if not str(c).lower().startswith("unnamed")
             ]
-        ].copy()
+        ]
 
         if not df.empty:
             df["EIA Workbook Sheet"] = sheet
@@ -581,229 +768,32 @@ def read_eia_workbook(workbook_bytes, engine):
 
     if not frames:
         raise RuntimeError(
-            "The workbook opened but no recognizable generator tables "
-            "were detected. EIA may have changed the workbook layout."
+            "EIA workbook was downloaded but no recognizable generator "
+            "table was found."
         )
 
-    return pd.concat(frames, ignore_index=True, sort=False)
+    raw = pd.concat(frames, ignore_index=True, sort=False)
 
-
-# ============================================================
-# NORMALIZE EIA OR CSV FIELDS
-# Original fields are retained in the project detail view.
-# ============================================================
-
-def standardize_assets(df, source_name, source_url=""):
-    df = df.copy()
-
-    def column_key(name):
-        return re.sub(r"[^a-z0-9]+", "", str(name).lower())
-
-    lookup = {}
-    for column in df.columns:
-        lookup.setdefault(column_key(column), column)
-
-    def locate(candidates):
-        for candidate in candidates:
-            found = lookup.get(column_key(candidate))
-            if found is not None:
-                return found
-        return None
-
-    mappings = {
-        "plant_name": [
-            "Plant Name", "plant_name", "project_name",
-            "facility_name", "name"
-        ],
-        "state": [
-            "Plant State", "State", "Plant State Abbreviation", "state_name"
-        ],
-        "county": ["County", "Plant County", "county_name"],
-        "plant_code": ["Plant Code", "Plant ID", "plant_id"],
-        "generator_id": ["Generator ID", "Generator"],
-        "entity_name": ["Entity Name", "Utility Name", "Operator", "Owner"],
-        "entity_id": ["Entity ID", "Utility ID"],
-        "producer_type": ["Plant Producer Type", "Producer Type"],
-        "technology_group": ["Technology", "Technology Type", "technology_group"],
-        "energy_source_code": ["Energy Source Code", "Energy Source"],
-        "prime_mover_code": ["Prime Mover Code", "Prime Mover"],
-        "nameplate_capacity_mw": [
-            "Nameplate Capacity (MW)", "Nameplate Capacity MW",
-            "nameplate_capacity_mw", "Capacity (MW)", "capacity_mw"
-        ],
-        "net_summer_capacity_mw": [
-            "Net Summer Capacity (MW)", "Net Summer Capacity MW"
-        ],
-        "status": [
-            "Status", "Operating Status", "Lifecycle Status",
-            "Lifecycle Group", "lifecycle_group", "project_status"
-        ],
-        "operating_year": ["Operating Year"],
-        "operating_month": ["Operating Month"],
-        "planned_operating_year": [
-            "Planned Operating Year", "Planned Year"
-        ],
-        "planned_operating_month": [
-            "Planned Operating Month", "Planned Month"
-        ],
-        "latitude": [
-            "Plant Latitude", "Latitude", "plant_latitude"
-        ],
-        "longitude": [
-            "Plant Longitude", "Longitude", "plant_longitude"
-        ],
-    }
-
-    for standard, candidates in mappings.items():
-        original = locate(candidates)
-        if original is not None:
-            df[standard] = df[original]
-
-    defaults = {
-        "plant_name": "Unnamed plant",
-        "state": "Unknown",
-        "county": "Unknown",
-        "plant_code": None,
-        "generator_id": None,
-        "entity_name": "Not reported",
-        "entity_id": None,
-        "producer_type": "Not reported",
-        "technology_group": "Unknown",
-        "energy_source_code": "",
-        "prime_mover_code": "",
-        "nameplate_capacity_mw": None,
-        "net_summer_capacity_mw": None,
-        "status": "Not reported",
-        "operating_year": None,
-        "operating_month": None,
-        "planned_operating_year": None,
-        "planned_operating_month": None,
-        "latitude": None,
-        "longitude": None,
-    }
-
-    for col, default in defaults.items():
-        if col not in df:
-            df[col] = default
-
-    numeric_cols = [
-        "nameplate_capacity_mw",
-        "net_summer_capacity_mw",
-        "latitude",
-        "longitude",
-        "operating_year",
-        "operating_month",
-        "planned_operating_year",
-        "planned_operating_month",
-    ]
-
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    tech = df["technology_group"].fillna("").astype(str).str.lower()
-    source = df["energy_source_code"].fillna("").astype(str).str.lower()
-    mover = df["prime_mover_code"].fillna("").astype(str).str.lower()
-
-    bess_mask = (
-        tech.str.contains(r"battery|storage", regex=True)
-        | mover.str.fullmatch("ba", na=False)
-        | source.str.fullmatch("mwh", na=False)
-    )
-
-    wind_mask = (
-        tech.str.contains("wind", na=False)
-        | source.str.fullmatch("wnd", na=False)
-        | source.str.fullmatch("wds", na=False)
-    )
-
-    solar_mask = (
-        tech.str.contains(r"solar|photovoltaic|concentrat", regex=True)
-        | source.str.fullmatch("sun", na=False)
-        | mover.str.fullmatch("pv", na=False)
-    )
-
-    # Retain unknown classifications rather than incorrectly calling them Solar.
-    df["technology_display"] = "Other"
-    df.loc[solar_mask, "technology_display"] = "Solar"
-    df.loc[wind_mask, "technology_display"] = "Wind"
-    df.loc[bess_mask, "technology_display"] = "BESS"
-
-    df["source_dataset"] = source_name
-    df["source_url"] = source_url or ""
-
-    df = df.reset_index(drop=True)
-
-    plant_codes = df["plant_code"].fillna("").astype(str)
-    generator_ids = df["generator_id"].fillna("").astype(str)
-
-    df["record_id"] = [
-        f"{plant_codes.iloc[i]}-{generator_ids.iloc[i]}-{i}"
-        for i in range(len(df))
-    ]
-
-    return df
-
-
-# ============================================================
-# LOAD EIA DATASET
-# ============================================================
-
-@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
-def load_eia_assets():
-    content, url, engine = download_eia_inventory()
-    raw = read_eia_workbook(content, engine)
-
-    assets = standardize_assets(
+    normalized = standardize_assets(
         raw,
         "EIA-860M monthly inventory",
-        url,
+        workbook_url,
     )
 
-    assets = assets[
-        assets["technology_display"].isin(["Solar", "Wind", "BESS"])
+    normalized = normalized[
+        normalized["technology_display"].isin(["Solar", "Wind", "BESS"])
     ].copy()
 
-    if assets.empty:
+    if normalized.empty:
         raise RuntimeError(
-            "No Solar, Wind or BESS records were recognized. "
-            "Inspect the downloaded EIA workbook's column format."
+            "No Solar, Wind or BESS records could be identified in the EIA file."
         )
 
-    return assets, url
+    return normalized, workbook_url
 
 
 # ============================================================
-# LOAD USER CSV OR EXCEL
-# ============================================================
-
-def load_user_file(upload):
-    check_upload_size(upload)
-    name = upload.name.lower()
-
-    if name.endswith(".csv"):
-        raw = pd.read_csv(upload)
-    elif name.endswith(".xlsx"):
-        raw = pd.read_excel(upload, engine="openpyxl")
-    elif name.endswith(".xls"):
-        raw = pd.read_excel(upload, engine="xlrd")
-    else:
-        raise ValueError("Upload a CSV, XLS or XLSX file.")
-
-    return standardize_assets(
-        raw,
-        "User-uploaded dataset",
-        "",
-    )
-
-
-@st.cache_data
-def load_repository_csv():
-    raw = pd.read_csv("renewable_asset_register.csv")
-    return standardize_assets(raw, "Repository CSV", "")
-
-
-# ============================================================
-# HEADER
+# BRAND HEADER
 # ============================================================
 
 st.markdown("""
@@ -823,19 +813,18 @@ st.markdown("""
         <span class="navitem">ABOUT</span>
     </div>
 </div>
-
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
 <div class="subtitle">
-Explore US renewable assets by technology. Select Solar, Wind or BESS to
-filter the entire workspace, inspect project-level fields, review reported
-capacity and download detailed records.
+Explore US renewable energy projects. Select Solar, Wind or BESS to filter
+the map, project register, analytics and complete source-record view.
 </div>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# DATA SOURCE SELECTOR
+# DATA SOURCE CONTROLS
+# CSV IS THE DEFAULT TO PREVENT STARTUP DELAYS.
 # ============================================================
 
 with st.sidebar:
@@ -843,95 +832,94 @@ with st.sidebar:
     st.caption("LOCATION INTELLIGENCE PLATFORM")
     st.divider()
 
-    source_mode = st.radio(
+    data_mode = st.radio(
         "Project data source",
         [
-            "EIA live inventory",
-            "Upload a file",
             "Repository CSV",
+            "Upload a file",
+            "EIA live inventory",
         ],
         index=0,
+        key="data_mode",
+        help=(
+            "Repository CSV loads renewable_asset_register.csv. "
+            "EIA live inventory makes an external request only when selected."
+        ),
     )
 
-    upload = None
+    uploaded_file = None
 
-    if source_mode == "Upload a file":
-        upload = st.file_uploader(
-            "Project data file",
+    if data_mode == "Upload a file":
+        uploaded_file = st.file_uploader(
+            "Upload CSV, XLS or XLSX",
             type=["csv", "xls", "xlsx"],
-            help="Upload a CSV or EIA-style Excel workbook.",
         )
 
 try:
-    if source_mode == "EIA live inventory":
-        with st.spinner("Connecting to EIA and checking workbook format..."):
-            all_assets, actual_source_url = load_eia_assets()
+    if data_mode == "Repository CSV":
+        assets = load_repository_csv()
+        source_label = "Repository CSV: renewable_asset_register.csv"
+        source_url = ""
 
-        source_label = "EIA-860M monthly generator inventory"
-        source_warning = (
-            "Monthly EIA values are preliminary and can be revised."
-        )
-
-    elif source_mode == "Upload a file":
-        if upload is None:
-            st.info("Upload a CSV, XLS or XLSX file in the sidebar.")
+    elif data_mode == "Upload a file":
+        if uploaded_file is None:
+            st.info("Upload your project dataset in the sidebar.")
             st.stop()
 
-        all_assets = load_user_file(upload)
-        actual_source_url = ""
-        source_label = f"Uploaded file: {upload.name}"
-        source_warning = (
-            "The platform displays the fields in the uploaded source."
-        )
+        assets = load_user_file(uploaded_file)
+        source_label = f"User upload: {uploaded_file.name}"
+        source_url = ""
 
     else:
-        all_assets = load_repository_csv()
-        actual_source_url = ""
-        source_label = "renewable_asset_register.csv"
-        source_warning = (
-            "The platform displays the fields in the repository CSV."
-        )
+        with st.spinner(
+            "EIA was selected. Downloading and validating the workbook..."
+        ):
+            assets, source_url = load_eia_assets()
+
+        source_label = "EIA-860M monthly generator inventory"
+
+except FileNotFoundError:
+    st.error(
+        "renewable_asset_register.csv was not found in the repository root. "
+        "Add the CSV to GitHub or select Upload a file in the sidebar."
+    )
+    st.stop()
 
 except Exception as exc:
-    st.error("The selected dataset could not be loaded.")
-    st.code(f"{type(exc).__name__}: {exc}")
+    st.error(f"Could not load the selected dataset: {exc}")
 
-    st.markdown(
-        f"[Open official EIA-860M inventory]({EIA_PAGE})"
-    )
+    st.markdown(f"[Open official EIA data page]({EIA_PAGE})")
 
     st.info(
-        "If the EIA download fails, select 'Upload a file' in the sidebar "
-        "and upload the official workbook downloaded manually from the "
-        "EIA page, or use your asset CSV."
+        "Choose Repository CSV or Upload a file from the sidebar to continue "
+        "without the EIA download."
     )
     st.stop()
 
 
 # ============================================================
-# TECHNOLOGY SELECTOR
-# Selection drives KPIs, map, register, charts and detail view.
+# TECHNOLOGY SELECTION
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">Technology selection</div>',
+    '<div class="section-title">Select technology</div>',
     unsafe_allow_html=True,
 )
 
 technology_choice = st.radio(
-    "Filter all project information by technology",
+    "Show projects",
     ["All technologies", "Solar", "Wind", "BESS"],
     horizontal=True,
     key="technology_choice",
 )
 
 if technology_choice == "All technologies":
-    working_assets = all_assets[
-        all_assets["technology_display"].isin(["Solar", "Wind", "BESS"])
+    working = assets[
+        assets["technology_display"].isin(["Solar", "Wind", "BESS"])
     ].copy()
 else:
-    working_assets = all_assets[
-        all_assets["technology_display"] == technology_choice
+    working = assets[
+        assets["technology_display"] == technology_choice
     ].copy()
 
 
@@ -943,111 +931,107 @@ with st.sidebar:
     st.divider()
     st.markdown("### Asset filters")
 
-    state_options = sorted(
-        working_assets["state"].fillna("Unknown").astype(str).unique()
+    states = sorted(
+        working["state"].fillna("Unknown").astype(str).unique().tolist()
     )
 
     selected_states = st.multiselect(
         "State",
-        state_options,
+        states,
         default=[],
         help="Leave empty to include all states.",
     )
 
-    status_options = sorted(
-        working_assets["status"].fillna("Unknown").astype(str).unique()
+    statuses = sorted(
+        working["status"].fillna("Unknown").astype(str).unique().tolist()
     )
 
     selected_statuses = st.multiselect(
-        "Status",
-        status_options,
-        default=status_options,
+        "Project / generator status",
+        statuses,
+        default=statuses,
     )
 
-    working_assets["nameplate_capacity_mw"] = pd.to_numeric(
-        working_assets["nameplate_capacity_mw"],
-        errors="coerce",
+    working["nameplate_capacity_mw"] = pd.to_numeric(
+        working["nameplate_capacity_mw"], errors="coerce"
     )
 
-    max_mw = working_assets["nameplate_capacity_mw"].max()
+    max_mw = working["nameplate_capacity_mw"].max()
     max_mw = max(1.0, float(max_mw)) if pd.notna(max_mw) else 1.0
 
     capacity_range = st.slider(
-        "Capacity (MW)",
+        "Capacity range (MW)",
         min_value=0.0,
         max_value=max_mw,
         value=(0.0, max_mw),
     )
 
 
-filtered = working_assets[
-    working_assets["status"].fillna("Unknown").astype(str).isin(
-        selected_statuses
-    )
+filtered = working[
+    working["status"].fillna("Unknown").astype(str).isin(selected_statuses)
 ].copy()
 
 if selected_states:
     filtered = filtered[
-        filtered["state"].fillna("Unknown").astype(str).isin(
-            selected_states
-        )
+        filtered["state"].fillna("Unknown").astype(str).isin(selected_states)
     ].copy()
 
 filtered = filtered[
-    filtered["nameplate_capacity_mw"].between(*capacity_range)
+    pd.to_numeric(
+        filtered["nameplate_capacity_mw"], errors="coerce"
+    ).between(*capacity_range)
 ].copy()
 
 
 # ============================================================
-# EXECUTIVE KPIs
+# KPI OVERVIEW
 # ============================================================
 
-n_records = len(filtered)
-n_capacity = filtered["nameplate_capacity_mw"].sum()
-n_states = filtered["state"].nunique()
-n_plants = (
+record_count = len(filtered)
+
+capacity_total = pd.to_numeric(
+    filtered["nameplate_capacity_mw"], errors="coerce"
+).sum()
+
+plant_count = (
     filtered["plant_code"].nunique()
-    if "plant_code" in filtered
-    else n_records
+    if "plant_code" in filtered else record_count
 )
 
-tech_counts = filtered["technology_display"].value_counts()
+state_count = filtered["state"].nunique()
+technology_counts = filtered["technology_display"].value_counts()
 
-solar_count = int(tech_counts.get("Solar", 0))
-wind_count = int(tech_counts.get("Wind", 0))
-bess_count = int(tech_counts.get("BESS", 0))
+solar_count = int(technology_counts.get("Solar", 0))
+wind_count = int(technology_counts.get("Wind", 0))
+bess_count = int(technology_counts.get("BESS", 0))
 
 k1, k2, k3, k4 = st.columns(4)
 
 with k1:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{n_records:,}</div><div class="kpi-label">'
-        'Generator records in view</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">{record_count:,}</div>'
+        '<div class="kpi-label">Generator records in view</div></div>',
         unsafe_allow_html=True,
     )
 
 with k2:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{n_capacity:,.1f} MW</div><div class="kpi-label">'
-        'Represented capacity</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">{capacity_total:,.1f} MW</div>'
+        '<div class="kpi-label">Represented capacity</div></div>',
         unsafe_allow_html=True,
     )
 
 with k3:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{n_plants:,}</div><div class="kpi-label">'
-        'Distinct plant codes</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">{plant_count:,}</div>'
+        '<div class="kpi-label">Distinct plant codes</div></div>',
         unsafe_allow_html=True,
     )
 
 with k4:
     st.markdown(
-        f'<div class="kpi-card"><div class="kpi-value">'
-        f'{n_states:,}</div><div class="kpi-label">'
-        'States represented</div></div>',
+        f'<div class="kpi-card"><div class="kpi-value">{state_count:,}</div>'
+        '<div class="kpi-label">States represented</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -1056,18 +1040,23 @@ st.markdown(
     f'<span class="pill">Solar · {solar_count:,}</span>'
     f'<span class="pill">Wind · {wind_count:,}</span>'
     f'<span class="pill">BESS · {bess_count:,}</span>'
-    f'</div>',
+    '</div>',
     unsafe_allow_html=True,
 )
 
-st.caption(f"Data source: {source_label}. {source_warning}")
+st.caption(f"Data source: {source_label}")
 
-if actual_source_url:
-    st.markdown(f"[Open source workbook]({actual_source_url})")
+if source_url:
+    st.markdown(f"[Open selected EIA workbook]({source_url})")
+
+if data_mode == "EIA live inventory":
+    st.info(
+        "EIA monthly inventory values are preliminary and may be revised."
+    )
 
 
 # ============================================================
-# CHART HELPER
+# UNIVERSAL PLOTLY STYLE
 # ============================================================
 
 def style_chart(fig):
@@ -1081,6 +1070,7 @@ def style_chart(fig):
         legend=dict(
             font=dict(family=FONT, size=12, color=BLACK),
             bgcolor="rgba(251,249,247,0)",
+            title=dict(font=dict(family=FONT, size=12, color=BLACK)),
         ),
         paper_bgcolor=BG,
         plot_bgcolor=BG,
@@ -1088,22 +1078,25 @@ def style_chart(fig):
         hoverlabel=dict(
             bgcolor=WHITE,
             font=dict(family=FONT, size=12, color=BLACK),
+            bordercolor=LINE,
         ),
     )
 
     fig.update_xaxes(
         tickfont=dict(family=FONT, size=12, color=BLACK),
         title_font=dict(family=FONT, size=12, color=BLACK),
-        showgrid=False,
         automargin=True,
+        showgrid=False,
+        zeroline=False,
     )
 
     fig.update_yaxes(
         tickfont=dict(family=FONT, size=12, color=BLACK),
         title_font=dict(family=FONT, size=12, color=BLACK),
-        gridcolor=LINE,
-        showgrid=True,
         automargin=True,
+        showgrid=True,
+        gridcolor=LINE,
+        zeroline=False,
     )
 
     return fig
@@ -1113,7 +1106,7 @@ def style_chart(fig):
 # MAIN WORKSPACE
 # ============================================================
 
-tab_map, tab_projects, tab_details, tab_analytics, tab_sources = st.tabs([
+tab_map, tab_register, tab_detail, tab_analytics, tab_method = st.tabs([
     "Location explorer",
     "Project register",
     "Project details",
@@ -1133,8 +1126,8 @@ with tab_map:
     )
 
     st.caption(
-        f"Current technology view: {technology_choice}. "
-        "Only records with valid coordinates can appear on the map."
+        f"Current selection: {technology_choice}. "
+        "Only rows with valid coordinates appear on the map."
     )
 
     map_data = filtered.dropna(
@@ -1149,8 +1142,7 @@ with tab_map:
     if map_data.empty:
         st.warning(
             "No usable coordinates are available in the selected data. "
-            "Use the project register to inspect records or load a dataset "
-            "that includes latitude and longitude."
+            "The register and project details are still available."
         )
     else:
         fig = px.scatter_map(
@@ -1195,8 +1187,8 @@ with tab_map:
         st.plotly_chart(fig, use_container_width=True)
 
     st.caption(
-        "Generator coordinates do not establish parcel boundaries, usable "
-        "land, available transmission capacity or interconnection feasibility."
+        "A generator location is not a parcel boundary and does not establish "
+        "available acreage or interconnection feasibility."
     )
 
 
@@ -1204,64 +1196,56 @@ with tab_map:
 # PROJECT REGISTER
 # ============================================================
 
-with tab_projects:
+with tab_register:
     st.markdown(
         '<div class="section-title">Project and generator register</div>',
         unsafe_allow_html=True,
     )
 
-    search_text = st.text_input(
-        "Search projects",
-        placeholder="Search project, owner, state, county or generator ID",
+    search = st.text_input(
+        "Search project records",
+        placeholder="Plant name, owner, state, county or generator ID",
     )
 
-    searchable_fields = [
+    search_cols = [
         "plant_name", "state", "county", "entity_name",
         "technology_group", "generator_id", "plant_code",
         "status", "energy_source_code", "prime_mover_code",
     ]
+    search_cols = [c for c in search_cols if c in filtered.columns]
 
-    searchable_fields = [
-        c for c in searchable_fields if c in filtered.columns
-    ]
+    results = filtered.copy()
 
-    search_results = filtered.copy()
-
-    if search_text.strip():
-        mask = search_results[searchable_fields].apply(
+    if search.strip():
+        matches = results[search_cols].apply(
             lambda col: col.astype(str).str.contains(
-                search_text.strip(),
-                case=False,
-                na=False,
-                regex=False,
+                search.strip(), case=False, na=False, regex=False
             )
         ).any(axis=1)
 
-        search_results = search_results[mask].copy()
+        results = results[matches].copy()
 
-    display_columns = [
+    display_cols = [
         "plant_name", "technology_display", "entity_name",
         "state", "county", "plant_code", "generator_id",
         "nameplate_capacity_mw", "net_summer_capacity_mw",
-        "status", "operating_year", "planned_operating_year",
+        "energy_capacity_mwh", "status", "operating_year",
+        "planned_operating_year",
     ]
-
-    display_columns = [
-        c for c in display_columns if c in search_results.columns
-    ]
+    display_cols = [c for c in display_cols if c in results.columns]
 
     st.dataframe(
-        search_results[display_columns],
+        results[display_cols],
         use_container_width=True,
         hide_index=True,
         height=450,
     )
 
-    st.caption(f"{len(search_results):,} records shown.")
+    st.caption(f"{len(results):,} records displayed.")
 
     st.download_button(
-        "Download filtered projects CSV",
-        data=search_results.to_csv(index=False).encode("utf-8"),
+        "Download filtered project records",
+        data=results.to_csv(index=False).encode("utf-8"),
         file_name="sunstripe_filtered_projects.csv",
         mime="text/csv",
     )
@@ -1271,14 +1255,14 @@ with tab_projects:
 # PROJECT DETAILS
 # ============================================================
 
-with tab_details:
+with tab_detail:
     st.markdown(
-        '<div class="section-title">Full project information</div>',
+        '<div class="section-title">Complete project information</div>',
         unsafe_allow_html=True,
     )
 
     if filtered.empty:
-        st.info("No projects match the current filters.")
+        st.info("No records match the current filters.")
     else:
         options = filtered.copy()
 
@@ -1296,19 +1280,19 @@ with tab_details:
             + options["record_id"].astype(str)
         )
 
-        display_to_record = dict(
+        label_to_id = dict(
             zip(options["_display"], options["record_id"])
         )
 
-        selected_label = st.selectbox(
-            "Select a project or generator",
+        label = st.selectbox(
+            "Select a project / generator",
             options["_display"].tolist(),
         )
 
-        selected_record = display_to_record[selected_label]
+        record_id = label_to_id[label]
 
         project = filtered[
-            filtered["record_id"] == selected_record
+            filtered["record_id"] == record_id
         ].iloc[0]
 
         st.markdown(f"### {project['plant_name']}")
@@ -1317,34 +1301,34 @@ with tab_details:
 
         d1.metric("Technology", project["technology_display"])
 
-        capacity = project["nameplate_capacity_mw"]
+        mw = project["nameplate_capacity_mw"]
         d2.metric(
             "Nameplate capacity",
-            f"{capacity:,.2f} MW" if pd.notna(capacity) else "Not reported",
+            f"{mw:,.2f} MW" if pd.notna(mw) else "Not reported",
         )
 
-        d3.metric("State", str(project.get("state", "Not reported")))
-
-        d4.metric("Reported status", str(project.get("status", "Not reported")))
+        d3.metric("State", str(project.get("state", "Unknown")))
+        d4.metric("Status", str(project.get("status", "Not reported")))
 
         st.markdown(
-            '<div class="section-title">Key project information</div>',
+            '<div class="section-title">Project summary</div>',
             unsafe_allow_html=True,
         )
 
         important_fields = [
             ("Plant name", "plant_name"),
             ("Technology", "technology_group"),
-            ("Plant code / ID", "plant_code"),
+            ("Plant code", "plant_code"),
             ("Generator ID", "generator_id"),
-            ("Owner / entity", "entity_name"),
+            ("Owner / reporting entity", "entity_name"),
             ("Entity ID", "entity_id"),
             ("Producer type", "producer_type"),
             ("Energy source code", "energy_source_code"),
             ("Prime mover code", "prime_mover_code"),
             ("Nameplate capacity (MW)", "nameplate_capacity_mw"),
             ("Net summer capacity (MW)", "net_summer_capacity_mw"),
-            ("Status", "status"),
+            ("Energy capacity (MWh)", "energy_capacity_mwh"),
+            ("Reported status", "status"),
             ("State", "state"),
             ("County", "county"),
             ("Latitude", "latitude"),
@@ -1353,50 +1337,48 @@ with tab_details:
             ("Operating month", "operating_month"),
             ("Planned operating year", "planned_operating_year"),
             ("Planned operating month", "planned_operating_month"),
+            ("Data source", "source_dataset"),
         ]
 
-        details = []
+        detail_rows = []
 
-        for label, column in important_fields:
-            value = project.get(column, None)
+        for field_label, field_name in important_fields:
+            value = project.get(field_name, None)
 
             if value is None or pd.isna(value) or str(value).strip() == "":
                 value = "Not reported in this record"
+            elif field_name in ["latitude", "longitude"]:
+                value = f"{float(value):.6f}"
+            elif field_name in [
+                "nameplate_capacity_mw",
+                "net_summer_capacity_mw",
+                "energy_capacity_mwh",
+            ]:
+                value = f"{float(value):,.2f}"
 
-            elif column in [
-                "latitude", "longitude",
-                "nameplate_capacity_mw", "net_summer_capacity_mw",
-            ] and isinstance(value, (float, int)):
-                if column in ["latitude", "longitude"]:
-                    value = f"{value:.6f}"
-                else:
-                    value = f"{value:,.2f}"
-
-            details.append({
-                "Information": label,
+            detail_rows.append({
+                "Information": field_label,
                 "Value": str(value),
             })
 
         st.dataframe(
-            pd.DataFrame(details),
+            pd.DataFrame(detail_rows),
             use_container_width=True,
             hide_index=True,
         )
 
         st.markdown(
-            '<div class="section-title">Complete source record</div>',
+            '<div class="section-title">Every available source field</div>',
             unsafe_allow_html=True,
         )
 
-        raw_record = project.drop(
-            labels=["_display"], errors="ignore"
-        )
+        raw_record = project.drop(labels=["_display"], errors="ignore")
 
         raw_details = pd.DataFrame({
             "Field": raw_record.index.astype(str),
             "Value": [
-                "Not reported" if pd.isna(value) else str(value)
-                for value in raw_record.values
+                "Not reported" if pd.isna(v) else str(v)
+                for v in raw_record.values
             ],
         })
 
@@ -1409,24 +1391,22 @@ with tab_details:
 
         st.download_button(
             "Download complete project record",
-            data=project.drop(labels=["_display"], errors="ignore")
-                .to_frame().T.to_csv(index=False).encode("utf-8"),
-            file_name=f"sunstripe_project_{selected_record}.csv",
+            data=raw_record.to_frame().T.to_csv(index=False).encode("utf-8"),
+            file_name=f"sunstripe_project_{record_id}.csv",
             mime="text/csv",
         )
 
-        project_url = project.get("source_url", "")
+        record_source = project.get("source_url", "")
 
-        if isinstance(project_url, str) and project_url.startswith("https://"):
-            st.markdown(f"[Open official source workbook]({project_url})")
-        else:
-            st.markdown(f"[Open EIA-860M source page]({EIA_PAGE})")
+        if isinstance(record_source, str) and record_source.startswith("https://"):
+            st.markdown(f"[Open source workbook]({record_source})")
+        elif data_mode == "EIA live inventory":
+            st.markdown(f"[Open official EIA data page]({EIA_PAGE})")
 
         st.warning(
-            "Only fields supplied by the data source are available. "
-            "Land ownership, parcel-level area, permits, detailed environmental "
-            "studies, interconnection results, BESS energy duration and project "
-            "revenue may require other sources."
+            "This view shows data available in the source record. It does not "
+            "guarantee parcel boundaries, land ownership, project permits, "
+            "interconnection results, storage duration, revenue or project economics."
         )
 
 
@@ -1441,7 +1421,7 @@ with tab_analytics:
     )
 
     if filtered.empty:
-        st.info("No records are available to chart.")
+        st.info("No data available for analysis.")
     else:
         by_state = (
             filtered.groupby("state", as_index=False)
@@ -1472,7 +1452,7 @@ with tab_analytics:
 
         st.plotly_chart(style_chart(fig), use_container_width=True)
 
-        status_counts = (
+        by_status = (
             filtered.groupby("status", as_index=False)
             .size()
             .rename(columns={"size": "Generator records"})
@@ -1480,11 +1460,11 @@ with tab_analytics:
         )
 
         fig2 = px.bar(
-            status_counts,
+            by_status,
             x="status",
             y="Generator records",
             text="Generator records",
-            title=f"{technology_choice}: records by reported status",
+            title=f"{technology_choice}: records by status",
         )
 
         fig2.update_traces(
@@ -1498,62 +1478,109 @@ with tab_analytics:
 
 
 # ============================================================
-# DATA SOURCES AND LIMITATIONS
+# SOURCES AND LIMITATIONS
 # ============================================================
 
-with tab_sources:
+with tab_method:
     st.markdown(
-        '<div class="section-title">Data sources and limitations</div>',
+        '<div class="section-title">Data sources and methodology</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(f"""
-**Selected source:** {source_label}
+**Current dataset:** {source_label}
 
 **Official EIA-860M inventory:**  
 {EIA_PAGE}
 
-The EIA monthly inventory reports existing and proposed generating units.
-Reported capacities are preliminary and can be revised in later releases.
-
-**Data limitations**
-
-- A generator record is not necessarily a unique development project.
-- One plant may contain several generators.
-- Coordinates are not guaranteed to be available for every record.
-- Some storage records may not include MWh energy capacity.
-- Land ownership, acreage, market revenue and interconnection capacity are
-  not guaranteed to be included in the generator inventory.
+EIA-860M provides preliminary generator-level records for existing and
+proposed generation. Monthly values may be revised. Generator-level records
+are not necessarily equivalent to individual development projects.
 """)
 
-    st.markdown("#### Other authoritative source directories")
+    st.markdown("#### Additional authoritative source directories")
 
-    st.markdown("""
-- [EIA annual generator inventory](https://www.eia.gov/electricity/data/eia860/)
-- [NREL developer resources](https://developer.nrel.gov/)
-- [USGS National Map](https://www.usgs.gov/the-national-map-data-delivery)
-- [FEMA flood maps](https://www.fema.gov/flood-maps)
-- [US Fish and Wildlife Service](https://www.fws.gov/)
-- [ERCOT](https://www.ercot.com/)
-- [CAISO](https://www.caiso.com/)
-- [MISO](https://www.misoenergy.org/)
-- [PJM](https://www.pjm.com/)
-""")
-
-    health = pd.DataFrame([
-        {"Feature": "Solar / Wind / BESS selector", "Status": "Implemented"},
-        {"Feature": "Filtered project register", "Status": "Implemented"},
-        {"Feature": "Full source record view", "Status": "Implemented"},
-        {"Feature": "EIA workbook format validation", "Status": "Implemented"},
-        {"Feature": "Manual CSV / XLS / XLSX upload", "Status": "Implemented"},
-        {"Feature": "Map", "Status": "Requires valid coordinates"},
-        {"Feature": "Parcel valuation", "Status": "Not connected"},
-        {"Feature": "Verified grid capacity", "Status": "Not connected"},
-        {"Feature": "Live power-market data", "Status": "Not connected"},
+    sources = pd.DataFrame([
+        {
+            "Provider": "EIA",
+            "Purpose": "Generator inventory",
+            "URL": "https://www.eia.gov/electricity/data/eia860m/index.php",
+        },
+        {
+            "Provider": "EIA annual inventory",
+            "Purpose": "Annual generator detail",
+            "URL": "https://www.eia.gov/electricity/data/eia860/",
+        },
+        {
+            "Provider": "NREL",
+            "Purpose": "Renewable resources",
+            "URL": "https://developer.nrel.gov/",
+        },
+        {
+            "Provider": "USGS",
+            "Purpose": "Elevation and terrain",
+            "URL": "https://www.usgs.gov/",
+        },
+        {
+            "Provider": "FEMA",
+            "Purpose": "Flood hazard information",
+            "URL": "https://www.fema.gov/flood-maps",
+        },
+        {
+            "Provider": "USFWS",
+            "Purpose": "Wetlands and ecological screening",
+            "URL": "https://www.fws.gov/",
+        },
+        {
+            "Provider": "ERCOT",
+            "Purpose": "Texas market and grid data",
+            "URL": "https://www.ercot.com/",
+        },
+        {
+            "Provider": "CAISO",
+            "Purpose": "California market and grid data",
+            "URL": "https://www.caiso.com/",
+        },
+        {
+            "Provider": "MISO",
+            "Purpose": "Regional market and grid data",
+            "URL": "https://www.misoenergy.org/",
+        },
+        {
+            "Provider": "PJM",
+            "Purpose": "Regional market and interconnection data",
+            "URL": "https://www.pjm.com/",
+        },
     ])
 
     st.dataframe(
-        health,
+        sources,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "URL": st.column_config.LinkColumn("Official source"),
+        },
+    )
+
+    st.markdown(
+        '<div class="section-title">Implementation status</div>',
+        unsafe_allow_html=True,
+    )
+
+    status_df = pd.DataFrame([
+        {"Feature": "Technology selection", "Status": "Implemented"},
+        {"Feature": "Project register and search", "Status": "Implemented"},
+        {"Feature": "Full source-record details", "Status": "Implemented"},
+        {"Feature": "CSV/XLS/XLSX upload", "Status": "Implemented"},
+        {"Feature": "Optional EIA workbook connector", "Status": "Implemented; depends on source availability"},
+        {"Feature": "Map", "Status": "Requires coordinates"},
+        {"Feature": "Parcel ownership and valuation", "Status": "Not connected"},
+        {"Feature": "Verified interconnection capacity", "Status": "Not connected"},
+        {"Feature": "Live market prices and revenues", "Status": "Not connected"},
+    ])
+
+    st.dataframe(
+        status_df,
         use_container_width=True,
         hide_index=True,
     )
