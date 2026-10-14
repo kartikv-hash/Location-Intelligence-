@@ -1830,7 +1830,7 @@ def _desc_fields(description):
 
 
 @st.cache_data(show_spinner=False, max_entries=2)
-def parse_transmission_kmz(kmz_bytes, max_points_per_line=60):
+def parse_transmission_kmz(kmz_bytes, max_points_per_line=12):
     """Stream the KMZ KML and simplify line paths for browser performance."""
     lines = []
     nodes = []
@@ -1945,7 +1945,7 @@ def parse_transmission_excel_file(file_path, file_mtime, file_size):
 
 
 @st.cache_data(show_spinner=False, max_entries=2)
-def parse_transmission_kmz_file(file_path, file_mtime, file_size, max_points_per_line=60):
+def parse_transmission_kmz_file(file_path, file_mtime, file_size, max_points_per_line=12):
     """Read KML paths from a KMZ committed to the repository."""
     del file_mtime, file_size  # Included in the cache key so file updates invalidate it.
     lines = []
@@ -2087,7 +2087,7 @@ with tab_grid:
                 status_options = sorted(joined["status"].dropna().astype(str).unique()) if "status" in joined else []
                 chosen_line_status = st.multiselect("Operational status", status_options, default=status_options, key="grid_status_filter")
                 owner_search = st.text_input("Filter by owner (optional)", key="grid_owner_filter", placeholder="Enter part of a utility / owner name")
-                show_nodes = st.checkbox("Show connected endpoint nodes / reported substations", value=True, key="grid_show_nodes")
+                show_nodes = st.checkbox("Show connected endpoint nodes / reported substations (may increase map load size)", value=False, key="grid_show_nodes")
 
             grid_filtered = joined.copy()
             if chosen_voltage and "voltage_class" in grid_filtered:
@@ -2112,17 +2112,53 @@ with tab_grid:
             if grid_filtered.empty:
                 st.warning("No transmission lines match these filters.")
             else:
+                # IMPORTANT: send only the fields needed for map rendering to the
+                # browser. Sending the entire joined dataframe (94k paths plus all
+                # Excel attributes) can exceed Streamlit's 200 MB message limit.
+                map_columns = [
+                    "path", "line_id", "owner", "voltage_kv", "voltage_class",
+                    "status", "origin_substation", "destination_substation",
+                ]
+                map_columns = [c for c in map_columns if c in grid_filtered.columns]
+                map_data = grid_filtered[map_columns].copy()
+                map_data["path"] = map_data["path"].apply(
+                    lambda path: path if isinstance(path, list) else []
+                )
+
                 line_layer = pdk.Layer(
-                    "PathLayer", data=grid_filtered, get_path="path", get_color=[232, 57, 45, 150],
-                    width_min_pixels=1, width_scale=1, pickable=True, auto_highlight=True,
+                    "PathLayer",
+                    data=map_data,
+                    get_path="path",
+                    get_color=[130, 70, 160, 175],
+                    width_min_pixels=1,
+                    width_scale=1,
+                    pickable=True,
+                    auto_highlight=True,
                 )
                 layers = [line_layer]
                 if show_nodes and not node_filtered.empty:
+                    # Deduplicate nearby endpoints to avoid sending 189k markers
+                    # to the browser. The full transmission-line geometry remains.
+                    node_filtered = node_filtered.copy()
+                    node_filtered["_lon_grid"] = node_filtered["longitude"].round(2)
+                    node_filtered["_lat_grid"] = node_filtered["latitude"].round(2)
+                    node_filtered = node_filtered.drop_duplicates(
+                        subset=["_lon_grid", "_lat_grid"]
+                    ).head(25000)
+                    node_map_data = node_filtered[
+                        ["longitude", "latitude", "node_name", "line_id", "end"]
+                    ].copy()
                     node_layer = pdk.Layer(
-                        "ScatterplotLayer", data=node_filtered, get_position="[longitude, latitude]",
-                        get_radius=1000, radius_min_pixels=3, radius_max_pixels=8,
-                        get_fill_color=[5, 7, 20, 210], get_line_color=[255, 255, 255, 220],
-                        line_width_min_pixels=1, pickable=True,
+                        "ScatterplotLayer",
+                        data=node_map_data,
+                        get_position="[longitude, latitude]",
+                        get_radius=500,
+                        radius_min_pixels=2,
+                        radius_max_pixels=6,
+                        get_fill_color=[5, 7, 20, 210],
+                        get_line_color=[255, 255, 255, 220],
+                        line_width_min_pixels=1,
+                        pickable=True,
                     )
                     layers.append(node_layer)
 
