@@ -1904,6 +1904,47 @@ def find_repository_file(extension, preferred_terms):
     return candidates[0]
 
 
+
+
+def is_valid_kmz(path):
+    """Return True only when the file is a readable ZIP archive containing KML."""
+    try:
+        if path is None or not Path(path).is_file() or Path(path).stat().st_size < 4:
+            return False
+        if not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path, "r") as archive:
+            return any(name.lower().endswith(".kml") for name in archive.namelist())
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def download_release_kmz(url, destination):
+    """Download and validate a real KMZ, rejecting HTML pages and LFS pointers."""
+    response = requests.get(
+        url,
+        headers={"User-Agent": "SunstripeLocationIntelligence/1.0", "Accept": "application/octet-stream"},
+        timeout=(20, 300),
+        allow_redirects=True,
+    )
+    response.raise_for_status()
+    content = response.content
+    if len(content) < 4 or not zipfile.is_zipfile(io.BytesIO(content)):
+        preview = content[:160].decode("utf-8", errors="replace").replace("\n", " ")
+        if content.startswith(b"version https://git-lfs.github.com/spec/v1"):
+            reason = "GitHub returned a Git LFS pointer, not the file content."
+        elif b"<html" in content[:500].lower() or b"<!doctype html" in content[:500].lower():
+            reason = "GitHub returned an HTML page instead of the KMZ asset."
+        else:
+            reason = f"The downloaded content is not a ZIP/KMZ archive. Response preview: {preview[:120]}"
+        raise ValueError(reason)
+    with zipfile.ZipFile(io.BytesIO(content), "r") as archive:
+        if not any(name.lower().endswith(".kml") for name in archive.namelist()):
+            raise ValueError("The downloaded ZIP does not contain a .kml file, so it is not a usable KMZ.")
+    Path(destination).write_bytes(content)
+    return Path(destination)
+
+
 @st.cache_data(show_spinner=False, max_entries=2)
 def parse_transmission_excel_file(file_path, file_mtime, file_size):
     """Load transmission attributes from a workbook committed to the repository."""
@@ -2003,30 +2044,26 @@ with tab_grid:
     excel_path = find_repository_file(".xlsx", ["transmission", "line", "grid"])
     kmz_path = find_repository_file(".kmz", ["transmission", "line", "grid"])
 
-    # Large KMZ files exceed GitHub's 25 MB browser-upload limit. If the KMZ
-    # is not in the repository, fetch it from a GitHub Release asset instead.
-    # Create a public release with tag `transmission-v1` and upload the original
-    # KMZ using the exact filename below. This retains the complete US network.
-    if kmz_path is None:
+    # A Git LFS pointer or HTML download can have a .kmz extension but is not
+    # a usable archive. Validate the local file before attempting to parse it.
+    if not is_valid_kmz(kmz_path):
         transmission_release_url = (
             "https://github.com/kartikv-hash/Location-Intelligence-/releases/"
             "download/transmission-v1/"
             "US_Electric_Power_Transmission_Lines_-5914890627387387697.kmz"
         )
         try:
-            with st.spinner("Downloading the complete US transmission network from GitHub Releases..."):
-                response = requests.get(transmission_release_url, timeout=(20, 240))
-                response.raise_for_status()
+            with st.spinner("Validating transmission KMZ and checking the GitHub Release asset..."):
                 downloaded_kmz = Path("/tmp/US_Electric_Power_Transmission_Lines_-5914890627387387697.kmz")
-                downloaded_kmz.write_bytes(response.content)
-                kmz_path = downloaded_kmz
+                kmz_path = download_release_kmz(transmission_release_url, downloaded_kmz)
         except Exception as download_error:
-            st.warning(
-                "The large KMZ is not in the repository and could not be downloaded from "
-                "the configured GitHub Release. Create a public release with tag "
-                "`transmission-v1` and upload the original KMZ with its exact filename."
+            st.error("The KMZ file was found, but it is not a valid KMZ archive, and the GitHub Release download did not return the real file.")
+            st.code(str(download_error))
+            st.markdown(
+                "**Fix:** Open the repository's **Releases** page and confirm that tag `transmission-v1` has the actual KMZ attached as a release asset. "
+                "Do not attach a Git LFS pointer or a GitHub webpage. If the KMZ is stored with Git LFS, configure Streamlit to retrieve the actual LFS content."
             )
-            st.caption(f"Download detail: {download_error}")
+            kmz_path = None
 
     if excel_path is None or kmz_path is None:
         st.error("Transmission files were not found next to app.py in the GitHub repository.")
