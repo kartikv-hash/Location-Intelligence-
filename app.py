@@ -2003,6 +2003,31 @@ with tab_grid:
     excel_path = find_repository_file(".xlsx", ["transmission", "line", "grid"])
     kmz_path = find_repository_file(".kmz", ["transmission", "line", "grid"])
 
+    # Large KMZ files exceed GitHub's 25 MB browser-upload limit. If the KMZ
+    # is not in the repository, fetch it from a GitHub Release asset instead.
+    # Create a public release with tag `transmission-v1` and upload the original
+    # KMZ using the exact filename below. This retains the complete US network.
+    if kmz_path is None:
+        transmission_release_url = (
+            "https://github.com/kartikv-hash/Location-Intelligence-/releases/"
+            "download/transmission-v1/"
+            "US_Electric_Power_Transmission_Lines_-5914890627387387697.kmz"
+        )
+        try:
+            with st.spinner("Downloading the complete US transmission network from GitHub Releases..."):
+                response = requests.get(transmission_release_url, timeout=(20, 240))
+                response.raise_for_status()
+                downloaded_kmz = Path("/tmp/US_Electric_Power_Transmission_Lines_-5914890627387387697.kmz")
+                downloaded_kmz.write_bytes(response.content)
+                kmz_path = downloaded_kmz
+        except Exception as download_error:
+            st.warning(
+                "The large KMZ is not in the repository and could not be downloaded from "
+                "the configured GitHub Release. Create a public release with tag "
+                "`transmission-v1` and upload the original KMZ with its exact filename."
+            )
+            st.caption(f"Download detail: {download_error}")
+
     if excel_path is None or kmz_path is None:
         st.error("Transmission files were not found next to app.py in the GitHub repository.")
         st.markdown(
