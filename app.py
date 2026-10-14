@@ -69,6 +69,14 @@ html, body, [class*="css"], button, input, textarea, select {
     padding-bottom: 2rem;
 }
 
+/* Keep large interactive maps inside the main content width. */
+[data-testid="stPydeckChart"],
+[data-testid="stDeckGlJsonChart"],
+[data-testid="stVegaLiteChart"] {
+    max-width: 100% !important;
+    overflow: hidden !important;
+}
+
 #MainMenu, footer {
     visibility: hidden;
 }
@@ -2165,9 +2173,11 @@ with tab_grid:
                 line_layer = pdk.Layer(
                     "PathLayer",
                     data=map_data,
+                    id="transmission_lines",
                     get_path="path",
-                    get_color=[130, 70, 160, 175],
-                    width_min_pixels=1,
+                    get_color=[130, 70, 160, 190],
+                    get_width=3,
+                    width_min_pixels=2,
                     width_scale=1,
                     pickable=True,
                     auto_highlight=True,
@@ -2214,6 +2224,7 @@ with tab_grid:
                             tooltip=tooltip,
                             map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
                         ),
+                        height=620,
                         use_container_width=True,
                         on_select="rerun",
                         selection_mode="single-object",
@@ -2229,6 +2240,7 @@ with tab_grid:
                             tooltip=tooltip,
                             map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
                         ),
+                        height=620,
                         use_container_width=True,
                     )
                     st.info(
@@ -2237,13 +2249,21 @@ with tab_grid:
                         "to version 1.40 or later in requirements.txt."
                     )
 
-                # Selection payload shape is Streamlit-version dependent;
-                # safely inspect the standard `selection.objects` structure.
+                # Extract selected features from Streamlit's PyDeck selection event.
+                # Streamlit versions differ slightly in the shape of this payload.
                 selected_feature = None
                 if map_event is not None:
                     try:
-                        selection = map_event.get("selection", {}) if isinstance(map_event, dict) else getattr(map_event, "selection", {})
-                        objects = selection.get("objects", {}) if isinstance(selection, dict) else getattr(selection, "objects", {})
+                        selection = (
+                            map_event.get("selection", {})
+                            if isinstance(map_event, dict)
+                            else getattr(map_event, "selection", {})
+                        )
+                        objects = (
+                            selection.get("objects", {})
+                            if isinstance(selection, dict)
+                            else getattr(selection, "objects", {})
+                        )
                         if isinstance(objects, dict):
                             for layer_objects in objects.values():
                                 if layer_objects:
@@ -2252,55 +2272,83 @@ with tab_grid:
                     except Exception:
                         selected_feature = None
 
-                if selected_feature:
-                    # Selected properties can arrive as a dict or a row-like object.
-                    if not isinstance(selected_feature, dict):
-                        try:
-                            selected_feature = dict(selected_feature)
-                        except Exception:
-                            selected_feature = {}
+                if selected_feature is not None and not isinstance(selected_feature, dict):
+                    try:
+                        selected_feature = dict(selected_feature)
+                    except Exception:
+                        selected_feature = {}
 
-                    selected_line_id = str(selected_feature.get("line_id", ""))
-                    selected_rows = grid_filtered[
-                        grid_filtered["line_id"].astype(str) == selected_line_id
-                    ] if selected_line_id else pd.DataFrame()
+                selected_line_id = ""
+                if isinstance(selected_feature, dict):
+                    selected_line_id = str(selected_feature.get("line_id", "")).strip()
 
-                    if not selected_rows.empty:
-                        selected_row = selected_rows.iloc[0]
-                        st.markdown("### Selected transmission line")
-                        d1, d2, d3 = st.columns(3)
-                        d1.metric("Line ID", str(selected_row.get("line_id", "Unknown")))
-                        voltage_value = selected_row.get("voltage_kv", pd.NA)
-                        d2.metric(
-                            "Voltage",
-                            f"{float(voltage_value):,.0f} kV"
-                            if pd.notna(voltage_value) else "Not reported",
-                        )
-                        d3.metric("Operational status", str(selected_row.get("status", "Not reported")))
+                # Reliable fallback: users can paste a line ID from a map click,
+                # tooltip, or the records table if click-selection isn't supported
+                # by the deployed Streamlit version/browser.
+                with st.expander("Find a line by ID", expanded=not bool(selected_line_id)):
+                    lookup_id = st.text_input(
+                        "Transmission line ID",
+                        value=selected_line_id,
+                        placeholder="Enter or paste a line ID",
+                        key="grid_lookup_line_id",
+                    ).strip()
+                    lookup_clicked = st.button(
+                        "Show line information",
+                        key="grid_lookup_line_button",
+                    )
+                    if lookup_clicked and lookup_id:
+                        selected_line_id = lookup_id
 
-                        details = {
-                            "Line ID": selected_row.get("line_id", "Not reported"),
-                            "Object ID": selected_row.get("object_id", "Not reported"),
-                            "Line type": selected_row.get("line_type", "Not reported"),
-                            "Voltage (kV)": selected_row.get("voltage_kv", "Not reported"),
-                            "Voltage class": selected_row.get("voltage_class", "Not reported"),
-                            "Operational status": selected_row.get("status", "Not reported"),
-                            "Owner": selected_row.get("owner", "Not reported"),
-                            "Origin substation": selected_row.get("origin_substation", "Not reported"),
-                            "Destination substation": selected_row.get("destination_substation", "Not reported"),
-                            "Source": selected_row.get("source", "Not reported"),
-                            "Validation method": selected_row.get("validation_method", "Not reported"),
-                            "Shape length": selected_row.get("shape_length", "Not reported"),
-                        }
-                        details_df = pd.DataFrame(
-                            [{k: (v if pd.notna(v) else "Not reported") for k, v in details.items()}]
-                        ).T.reset_index()
-                        details_df.columns = ["Attribute", "Value"]
-                        st.dataframe(details_df, hide_index=True, use_container_width=True)
-                    else:
-                        st.info("A line was selected, but no matching attribute record was found for its line ID.")
+                selected_rows = (
+                    grid_filtered[
+                        grid_filtered["line_id"].astype(str).str.strip() == selected_line_id
+                    ]
+                    if selected_line_id else pd.DataFrame()
+                )
+
+                if not selected_rows.empty:
+                    selected_row = selected_rows.iloc[0]
+                    st.markdown("### Selected transmission line")
+                    d1, d2, d3 = st.columns(3)
+                    d1.metric("Line ID", str(selected_row.get("line_id", "Unknown")))
+                    voltage_value = selected_row.get("voltage_kv", pd.NA)
+                    d2.metric(
+                        "Voltage",
+                        f"{float(voltage_value):,.0f} kV"
+                        if pd.notna(voltage_value) else "Not reported",
+                    )
+                    d3.metric("Operational status", str(selected_row.get("status", "Not reported")))
+
+                    details = {
+                        "Line ID": selected_row.get("line_id", "Not reported"),
+                        "Object ID": selected_row.get("object_id", "Not reported"),
+                        "Line type": selected_row.get("line_type", "Not reported"),
+                        "Voltage (kV)": selected_row.get("voltage_kv", "Not reported"),
+                        "Voltage class": selected_row.get("voltage_class", "Not reported"),
+                        "Operational status": selected_row.get("status", "Not reported"),
+                        "Owner": selected_row.get("owner", "Not reported"),
+                        "Origin substation": selected_row.get("origin_substation", "Not reported"),
+                        "Destination substation": selected_row.get("destination_substation", "Not reported"),
+                        "Source": selected_row.get("source", "Not reported"),
+                        "Validation method": selected_row.get("validation_method", "Not reported"),
+                        "Shape length": selected_row.get("shape_length", "Not reported"),
+                    }
+                    details_df = pd.DataFrame(
+                        [{k: (v if pd.notna(v) else "Not reported") for k, v in details.items()}]
+                    ).T.reset_index()
+                    details_df.columns = ["Attribute", "Value"]
+                    st.dataframe(details_df, hide_index=True, use_container_width=True)
+                elif selected_line_id:
+                    st.warning(
+                        "No line with that ID was found in the currently filtered records. "
+                        "Clear or adjust filters, or use an ID from the Transmission line records table."
+                    )
                 else:
-                    st.caption("Click a transmission line on the map to display its attributes below the map. Hover also shows a quick summary.")
+                    st.info(
+                        "Click a transmission line to inspect it. If clicking does not select a line "
+                        "in your browser, open **Find a line by ID** and paste an ID from the records table. "
+                        "Hovering over a line shows a quick summary."
+                    )
 
                 with st.expander("Transmission line records", expanded=False):
                     table_cols = [
