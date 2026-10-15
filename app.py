@@ -1053,25 +1053,52 @@ def clean_coordinate_segment(coordinates):
 
 
 def parse_wkt_linestring(value):
-    """Basic WKT LINESTRING parser for CSV uploads."""
+    """Parse WKT LINESTRING and MULTILINESTRING values from grid CSVs."""
     if not isinstance(value, str):
         return []
     text = value.strip()
-    if not text.upper().startswith("LINESTRING"):
+    upper = text.upper()
+    if not (upper.startswith("LINESTRING") or upper.startswith("MULTILINESTRING")):
         return []
+
+    # Split a MULTILINESTRING into its component coordinate groups without
+    # breaking on commas inside each group. This intentionally supports the
+    # common 2D GIS form used by transmission datasets.
     body_start = text.find("(")
     body_end = text.rfind(")")
     if body_start < 0 or body_end <= body_start:
         return []
+    body = text[body_start + 1:body_end].strip()
+    groups = []
+    if upper.startswith("LINESTRING"):
+        groups = [body.strip().strip("()").strip()]
+    else:
+        depth = 0
+        start = None
+        for i, char in enumerate(body):
+            if char == "(":
+                if depth == 0:
+                    start = i + 1
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0 and start is not None:
+                    groups.append(body[start:i])
+                    start = None
+        if not groups:
+            groups = [body.replace("(", "").replace(")", "")]
 
-    points = []
-    body = text[body_start + 1:body_end]
-    for pair in body.split(","):
-        numbers = re.findall(r"[-+]?\d+(?:\.\d+)?", pair)
-        if len(numbers) >= 2:
-            # WKT GIS convention: x=longitude, y=latitude.
-            points.append((float(numbers[0]), float(numbers[1])))
-    return [points] if len(points) >= 2 else []
+    output = []
+    for group in groups:
+        points = []
+        for pair in group.split(","):
+            numbers = re.findall(r"[-+]?\d+(?:\.\d+)?", pair)
+            if len(numbers) >= 2:
+                # WKT GIS convention: x=longitude, y=latitude.
+                points.append((float(numbers[0]), float(numbers[1])))
+        if len(points) >= 2:
+            output.append(points)
+    return output
 
 
 def find_voltage_column(columns):
@@ -1417,33 +1444,52 @@ def load_transmission_lines(source, filename=None):
 
 
 def discover_repository_grid_files():
-    """Find grid/transmission CSV/KMZ/KML files committed to the repo."""
+    """Find transmission files in the repository, including generically named CSVs."""
     root = Path(__file__).resolve().parent
     excluded_dirs = {".git", ".venv", "venv", "__pycache__", ".streamlit", "node_modules"}
     grid_name_pattern = re.compile(
-        r"(transmission|transmission.?line|power.?line|grid|substation|electric.?line|network)",
+        r"(transmission|trans.?line|power.?line|grid|substation|electric.?line|network|pylons|electricity.?infrastructure)",
         re.IGNORECASE,
     )
     candidates = []
+    asset_csv_names = {"renewable_asset_register.csv"}
+    # These are known non-grid data families; don't accidentally treat them as line files.
+    unrelated_name_pattern = re.compile(r"(lmp|price|pricing|settlement|eia.?860|asset.?register|renewable.?asset|generation|demand|weather)", re.I)
 
     for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if any(part in excluded_dirs for part in path.parts):
+        if not path.is_file() or any(part in excluded_dirs for part in path.parts):
             continue
         suffix = path.suffix.lower()
         if suffix not in {".csv", ".geojson", ".json", ".kml", ".kmz"}:
             continue
-        if path.name.lower() == "renewable_asset_register.csv":
+        if path.name.lower() in asset_csv_names:
             continue
 
-        # KMZ/KML files are treated as spatial/grid files; CSV/JSON files must
-        # have grid-oriented filenames to avoid loading unrelated datasets.
-        if suffix in {".kmz", ".kml"} or grid_name_pattern.search(path.stem):
+        # Spatial formats are considered grid inputs. For CSV/JSON, accept a
+        # grid-oriented filename OR inspect headers so a file named data.csv
+        # is still detected when it contains line geometry/coordinates/voltage.
+        if suffix in {".kmz", ".kml", ".geojson"} or grid_name_pattern.search(path.stem):
             candidates.append(path)
+            continue
+        if suffix == ".json" and grid_name_pattern.search(path.name):
+            candidates.append(path)
+            continue
+        if suffix == ".csv" and not unrelated_name_pattern.search(path.stem):
+            try:
+                headers = pd.read_csv(path, nrows=0).columns
+                normalized = {column_key(c) for c in headers}
+                has_geometry = bool(normalized & {"geometry", "geojson", "linegeometry", "wkt", "coordinates", "shape", "geom", "thegeom"})
+                has_endpoints = bool(normalized & {"fromlon", "fromlongitude", "startlon", "lon1", "x1"}) and bool(normalized & {"tolon", "tolongitude", "endlon", "lon2", "x2"})
+                has_spatial_points = bool(normalized & {"latitude", "lat", "y"}) and bool(normalized & {"longitude", "lon", "long", "lng", "x"})
+                has_line_attributes = bool(normalized & {"lineid", "transmissionlineid", "circuitid", "assetid", "featureid"}) and bool(normalized & {"voltage", "voltagekv", "nominalvoltage", "kv", "volts"})
+                if has_geometry or has_endpoints or has_spatial_points or has_line_attributes:
+                    candidates.append(path)
+            except Exception:
+                # A grid-named CSV is included above; unreadable generic CSVs are ignored.
+                pass
 
-    # Load structured line datasets before point layers; stable ordering helps reproducibility.
-    return sorted(candidates, key=lambda p: (p.suffix.lower() in {".csv"}, str(p).lower()))
+    # Keep KMZ/KML geometry sources first, then CSVs/attributes; stable ordering.
+    return sorted(set(candidates), key=lambda p: (p.suffix.lower() == ".csv", str(p).lower()))
 
 def transmission_line_traces(grouped_lines):
     """Create map line traces plus the exact colors used for the legend."""
