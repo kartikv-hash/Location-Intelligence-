@@ -1,15 +1,13 @@
 
 import io
+import json
 import re
 import zipfile
-import html
-import xml.etree.ElementTree as ET
-from pathlib import Path
 from urllib.parse import urljoin
 
 import pandas as pd
 import plotly.express as px
-import pydeck as pdk
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
@@ -41,6 +39,27 @@ TECH_COLORS = {
     "Other": "#89817B",
 }
 
+# Transmission-line colors by nominal voltage (kV).
+# Requested examples: 138 kV = orange; 240 kV = green.
+VOLTAGE_COLORS = {
+    34.5: "#17A2B8",  # Teal
+    46:   "#5B8E7D",  # Sage
+    69:   "#8E44AD",  # Purple
+    115:  "#2F80ED",  # Blue
+    138:  "#F28C28",  # Orange
+    161:  "#D94841",  # Vermilion
+    230:  "#6C5CE7",  # Violet
+    240:  "#2E8B57",  # Green
+    345:  "#C49A00",  # Gold
+    500:  "#C1121F",  # Deep red
+    765:  "#343A40",  # Charcoal
+}
+UNKNOWN_VOLTAGE_COLOR = "#777777"
+CUSTOM_VOLTAGE_PALETTE = [
+    "#008C95", "#AA3377", "#4477AA", "#CC6677", "#228833",
+    "#66CCEE", "#AA4499", "#999933", "#332288", "#DDCC77",
+]
+
 EIA_PAGE = "https://www.eia.gov/electricity/data/eia860m/index.php"
 MAX_UPLOAD_MB = 50
 
@@ -67,14 +86,6 @@ html, body, [class*="css"], button, input, textarea, select {
     max-width: 1500px;
     padding-top: 1rem;
     padding-bottom: 2rem;
-}
-
-/* Keep large interactive maps inside the main content width. */
-[data-testid="stPydeckChart"],
-[data-testid="stDeckGlJsonChart"],
-[data-testid="stVegaLiteChart"] {
-    max-width: 100% !important;
-    overflow: hidden !important;
 }
 
 #MainMenu, footer {
@@ -920,6 +931,349 @@ def load_eia_assets():
 
 
 # ============================================================
+# TRANSMISSION GRID LINE INGESTION AND VOLTAGE STYLING
+# Supports GeoJSON LineString/MultiLineString and CSV lines with
+# a GeoJSON/WKT geometry field or from/to endpoint coordinates.
+# ============================================================
+
+def normalize_voltage_kv(raw_value):
+    """Return a display label such as '138 kV' from kV or volt values."""
+    if raw_value is None or pd.isna(raw_value):
+        return "Unknown kV"
+
+    text = str(raw_value).strip()
+    if not text or text.lower() in {"nan", "none", "null", "unknown", "n/a"}:
+        return "Unknown kV"
+
+    # Handle multiple voltage values by using the first reported value.
+    # Example: '138000;230000' -> 138 kV. Review multi-voltage assets at source.
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text.replace(",", " "))
+    if not match:
+        return "Unknown kV"
+
+    try:
+        value = float(match.group(0))
+    except ValueError:
+        return "Unknown kV"
+
+    # Most GIS datasets store voltage in volts (e.g. 138000 V); others store kV.
+    if abs(value) >= 1000:
+        value /= 1000.0
+
+    if value <= 0 or value > 1500:
+        return "Unknown kV"
+
+    if abs(value - round(value)) < 0.15:
+        value = int(round(value))
+        return f"{value} kV"
+
+    return f"{value:g} kV"
+
+
+def voltage_value_from_label(label):
+    match = re.search(r"\d+(?:\.\d+)?", str(label))
+    return float(match.group(0)) if match else float("inf")
+
+
+def build_voltage_color_map(labels):
+    """Provide a distinct, stable color for each voltage level in the upload."""
+    labels = set(labels)
+    color_map = {}
+    if "Unknown kV" in labels:
+        color_map["Unknown kV"] = UNKNOWN_VOLTAGE_COLOR
+    custom_labels = []
+
+    for label in labels:
+        value = voltage_value_from_label(label)
+        if value == float("inf"):
+            continue
+
+        matched_key = next(
+            (key for key in VOLTAGE_COLORS if abs(float(key) - value) < 0.15),
+            None,
+        )
+        if matched_key is not None:
+            color_map[label] = VOLTAGE_COLORS[matched_key]
+        else:
+            custom_labels.append(label)
+
+    custom_labels.sort(key=lambda x: (voltage_value_from_label(x), x))
+    for i, label in enumerate(custom_labels):
+        color_map[label] = CUSTOM_VOLTAGE_PALETTE[i % len(CUSTOM_VOLTAGE_PALETTE)]
+
+    return color_map
+
+
+def iter_line_segments(geometry):
+    """Yield coordinate sequences from GeoJSON line geometries."""
+    if not isinstance(geometry, dict):
+        return
+
+    geom_type = geometry.get("type", "")
+    coordinates = geometry.get("coordinates")
+
+    if geom_type == "LineString" and isinstance(coordinates, list):
+        yield coordinates
+    elif geom_type == "MultiLineString" and isinstance(coordinates, list):
+        for segment in coordinates:
+            yield segment
+    elif geom_type == "GeometryCollection":
+        for child in geometry.get("geometries", []):
+            yield from iter_line_segments(child)
+    elif geom_type == "Feature":
+        yield from iter_line_segments(geometry.get("geometry", {}))
+
+
+def clean_coordinate_segment(coordinates):
+    """Validate GeoJSON coordinate tuples [longitude, latitude, ...]."""
+    if not isinstance(coordinates, (list, tuple)):
+        return None
+
+    clean = []
+    for point in coordinates:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        try:
+            lon, lat = float(point[0]), float(point[1])
+        except (TypeError, ValueError):
+            continue
+        if -180 <= lon <= 180 and -90 <= lat <= 90:
+            clean.append((lon, lat))
+
+    return clean if len(clean) >= 2 else None
+
+
+def parse_wkt_linestring(value):
+    """Basic WKT LINESTRING parser for CSV uploads."""
+    if not isinstance(value, str):
+        return []
+    text = value.strip()
+    if not text.upper().startswith("LINESTRING"):
+        return []
+    body_start = text.find("(")
+    body_end = text.rfind(")")
+    if body_start < 0 or body_end <= body_start:
+        return []
+
+    points = []
+    body = text[body_start + 1:body_end]
+    for pair in body.split(","):
+        numbers = re.findall(r"[-+]?\d+(?:\.\d+)?", pair)
+        if len(numbers) >= 2:
+            # WKT GIS convention: x=longitude, y=latitude.
+            points.append((float(numbers[0]), float(numbers[1])))
+    return [points] if len(points) >= 2 else []
+
+
+def find_voltage_column(columns):
+    # Prefer explicit kV / voltage fields over unrelated fields.
+    normalized = [(column_key(c), c) for c in columns]
+    priorities = ["voltagekv", "nominalvoltage", "operatingvoltage", "voltage", "kv", "volts"]
+    for wanted in priorities:
+        for key, original in normalized:
+            if key == wanted or (wanted == "voltage" and key.startswith("voltage")):
+                return original
+    for key, original in normalized:
+        if "voltage" in key or key.endswith("kv"):
+            return original
+    return None
+
+
+def load_transmission_lines(upload):
+    """Return {voltage_label: [(lons, lats), ...]} and feature count."""
+    if upload is None:
+        return {}, 0
+
+    check_upload_size(upload)
+    filename = upload.name.lower()
+    grouped = {}
+    segment_count = 0
+
+    def add_segment(coords, voltage_raw):
+        nonlocal segment_count
+        points = clean_coordinate_segment(coords)
+        if not points:
+            return
+        label = normalize_voltage_kv(voltage_raw)
+        grouped.setdefault(label, []).append(
+            ([p[0] for p in points], [p[1] for p in points])
+        )
+        segment_count += 1
+
+    def add_geojson_geometry(geometry, voltage_raw):
+        for segment in iter_line_segments(geometry):
+            add_segment(segment, voltage_raw)
+
+    if filename.endswith((".geojson", ".json")):
+        upload.seek(0)
+        document = json.load(upload)
+
+        if document.get("type") == "FeatureCollection":
+            features = document.get("features", [])
+        elif document.get("type") == "Feature":
+            features = [document]
+        else:
+            features = [{"type": "Feature", "geometry": document, "properties": {}}]
+
+        for feature in features:
+            properties = feature.get("properties") or {}
+            voltage_col = find_voltage_column(properties.keys())
+            voltage_raw = properties.get(voltage_col) if voltage_col else None
+            add_geojson_geometry(feature.get("geometry") or {}, voltage_raw)
+
+    elif filename.endswith(".csv"):
+        upload.seek(0)
+        df = pd.read_csv(upload)
+        normalized_columns = {column_key(c): c for c in df.columns}
+        voltage_col = find_voltage_column(df.columns)
+        geometry_col = next(
+            (normalized_columns[k] for k in ["geometry", "geojson", "linegeometry", "coordinates", "wkt"] if k in normalized_columns),
+            None,
+        )
+
+        endpoint_aliases = {
+            "from_lon": ["fromlon", "fromlongitude", "startlon", "startlongitude", "lon1", "longitude1", "x1"],
+            "from_lat": ["fromlat", "fromlatitude", "startlat", "startlatitude", "lat1", "latitude1", "y1"],
+            "to_lon": ["tolon", "tolongitude", "endlon", "endlongitude", "lon2", "longitude2", "x2"],
+            "to_lat": ["tolat", "tolatitude", "endlat", "endlatitude", "lat2", "latitude2", "y2"],
+        }
+        endpoint_cols = {}
+        for standard, aliases in endpoint_aliases.items():
+            endpoint_cols[standard] = next(
+                (normalized_columns[a] for a in aliases if a in normalized_columns),
+                None,
+            )
+
+        for _, row in df.iterrows():
+            voltage_raw = row.get(voltage_col) if voltage_col else None
+            handled = False
+
+            if geometry_col is not None and pd.notna(row.get(geometry_col)):
+                raw_geometry = row.get(geometry_col)
+                parsed = None
+                if isinstance(raw_geometry, dict):
+                    parsed = raw_geometry
+                elif isinstance(raw_geometry, str):
+                    text = raw_geometry.strip()
+                    try:
+                        parsed = json.loads(text)
+                    except (json.JSONDecodeError, TypeError):
+                        for segment in parse_wkt_linestring(text):
+                            add_segment(segment, voltage_raw)
+                            handled = True
+
+                if isinstance(parsed, dict):
+                    if parsed.get("type") == "Feature":
+                        add_geojson_geometry(parsed.get("geometry") or {}, voltage_raw)
+                    elif parsed.get("type") in {"LineString", "MultiLineString", "GeometryCollection"}:
+                        add_geojson_geometry(parsed, voltage_raw)
+                    elif isinstance(parsed.get("coordinates"), list):
+                        # Geometry column may contain only a coordinate array.
+                        coordinates = parsed["coordinates"]
+                        if coordinates and isinstance(coordinates[0], (list, tuple)):
+                            if coordinates[0] and isinstance(coordinates[0][0], (int, float)):
+                                add_segment(coordinates, voltage_raw)
+                            else:
+                                for segment in coordinates:
+                                    add_segment(segment, voltage_raw)
+                    handled = True
+
+                elif isinstance(parsed, list) and parsed:
+                    if isinstance(parsed[0], (list, tuple)) and len(parsed[0]) >= 2 and isinstance(parsed[0][0], (int, float)):
+                        add_segment(parsed, voltage_raw)
+                    else:
+                        for segment in parsed:
+                            add_segment(segment, voltage_raw)
+                    handled = True
+
+            if not handled and all(endpoint_cols.values()):
+                try:
+                    coords = [
+                        [float(row[endpoint_cols["from_lon"]]), float(row[endpoint_cols["from_lat"]])],
+                        [float(row[endpoint_cols["to_lon"]]), float(row[endpoint_cols["to_lat"]])],
+                    ]
+                    add_segment(coords, voltage_raw)
+                except (TypeError, ValueError, KeyError):
+                    continue
+    else:
+        raise ValueError("Transmission grid upload must be GeoJSON, JSON or CSV.")
+
+    if segment_count == 0:
+        raise ValueError(
+            "No valid transmission line geometries were found. Use GeoJSON with "
+            "LineString/MultiLineString features, or CSV with a geometry/WKT field "
+            "or from/to latitude and longitude columns. Include a voltage/voltage_kv "
+            "property or column for voltage-based colors."
+        )
+
+    return grouped, segment_count
+
+
+def transmission_line_traces(grouped_lines):
+    """Create map line traces plus the exact colors used for the legend."""
+    labels = list(grouped_lines.keys())
+    colors = build_voltage_color_map(labels)
+    traces = []
+
+    def sort_key(label):
+        return (voltage_value_from_label(label), label)
+
+    for label in sorted(labels, key=sort_key):
+        all_lon, all_lat = [], []
+        for lons, lats in grouped_lines[label]:
+            all_lon.extend(lons)
+            all_lat.extend(lats)
+            all_lon.append(None)
+            all_lat.append(None)
+
+        traces.append(
+            go.Scattermap(
+                lon=all_lon,
+                lat=all_lat,
+                mode="lines",
+                line=dict(color=colors[label], width=2.5),
+                name=f"{label} transmission",
+                legendgroup=f"transmission-{label}",
+                showlegend=True,
+                hovertemplate=f"<b>{label}</b><br>Transmission line<extra></extra>",
+            )
+        )
+
+    return traces, colors
+
+
+def transmission_legend_html(color_map):
+    """HTML legend that stays readable on the Sunstripe ivory background."""
+    if not color_map:
+        return ""
+
+    labels = sorted(
+        color_map.keys(),
+        key=lambda label: (voltage_value_from_label(label), label),
+    )
+
+    items = []
+    for label in labels:
+        color = color_map[label]
+        items.append(
+            '<span style="display:inline-flex;align-items:center;gap:7px;'
+            'border:1px solid #E7E0DB;border-radius:16px;padding:6px 10px;'
+            'margin:3px 5px 3px 0;background:#FFFDFA;color:#000000;'
+            'font:12px DM Sans,Arial,sans-serif;">'
+            f'<span style="display:inline-block;width:24px;height:4px;'
+            f'border-radius:2px;background:{color};"></span>{label}</span>'
+        )
+
+    return (
+        '<div style="margin:10px 0 14px;color:#000000;">'
+        '<div style="font-weight:700;font-size:13px;margin-bottom:5px;">'
+        'Transmission voltage legend</div>'
+        + ''.join(items)
+        + '</div>'
+    )
+
+
+# ============================================================
 # HEADER
 # ============================================================
 
@@ -979,6 +1333,20 @@ with st.sidebar:
             type=["csv", "xls", "xlsx"],
         )
 
+    st.divider()
+    st.markdown("### Transmission grid")
+    st.caption("Upload transmission lines to show voltage-colored linework on the map.")
+    transmission_file = st.file_uploader(
+        "Transmission lines (GeoJSON or CSV)",
+        type=["geojson", "json", "csv"],
+        key="transmission_grid_upload",
+        help=(
+            "Recommended: GeoJSON LineString/MultiLineString features with a "
+            "voltage or voltage_kv property. CSV also supports WKT/GeoJSON geometry "
+            "or from/to latitude-longitude columns."
+        ),
+    )
+
 
 # ============================================================
 # LOAD DATA
@@ -1027,6 +1395,22 @@ except Exception as exc:
         "EIA download."
     )
     st.stop()
+
+
+# Load uploaded transmission lines independently from the asset data.
+transmission_groups = {}
+transmission_segment_count = 0
+transmission_load_error = None
+
+if transmission_file is not None:
+    try:
+        transmission_file.seek(0)
+        transmission_groups, transmission_segment_count = load_transmission_lines(
+            transmission_file
+        )
+    except Exception as exc:
+        transmission_load_error = str(exc)
+        st.sidebar.error(f"Transmission line upload: {exc}")
 
 
 # ============================================================
@@ -1269,14 +1653,12 @@ def style_chart(fig):
 # WORKSPACE TABS
 # ============================================================
 
-tab_map, tab_register, tab_details, tab_analytics, tab_method, tab_grid, tab_bess = st.tabs([
+tab_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
     "Location explorer",
     "Project register",
     "Project details",
     "Technology analytics",
     "Data & limitations",
-    "Transmission grid",
-    "BESS Analysis",
 ])
 
 
@@ -1304,52 +1686,99 @@ with tab_map:
         & map_data["longitude"].between(-180, 180)
     ]
 
-    if map_data.empty:
+    line_traces, line_color_map = transmission_line_traces(transmission_groups)
+
+    if map_data.empty and not line_traces:
         st.warning(
-            "No usable coordinates are available for the selected records. "
-            "Use the project register and detail view, or upload coordinates."
+            "No usable asset coordinates or transmission lines are available. "
+            "Upload an asset dataset with latitude/longitude and/or a transmission "
+            "line GeoJSON/CSV in the sidebar."
         )
     else:
-        fig_map = px.scatter_map(
-            map_data,
-            lat="latitude",
-            lon="longitude",
-            color="technology_display",
-            color_discrete_map=TECH_COLORS,
-            hover_name="plant_name",
-            hover_data={
-                "state": True,
-                "county": True,
-                "plant_code": True,
-                "generator_id": True,
-                "nameplate_capacity_mw": ":,.2f",
-                "status": True,
-                "latitude": False,
-                "longitude": False,
-            },
-            map_style="open-street-map",
-            zoom=3,
-            height=620,
-            labels={
-                "technology_display": "Technology",
-                "plant_code": "Plant code",
-                "generator_id": "Generator ID",
-                "nameplate_capacity_mw": "Capacity (MW)",
-                "status": "Status",
-            },
-        )
+        if not map_data.empty:
+            fig_map = px.scatter_map(
+                map_data,
+                lat="latitude",
+                lon="longitude",
+                color="technology_display",
+                color_discrete_map=TECH_COLORS,
+                hover_name="plant_name",
+                hover_data={
+                    "state": True,
+                    "county": True,
+                    "plant_code": True,
+                    "generator_id": True,
+                    "nameplate_capacity_mw": ":,.2f",
+                    "status": True,
+                    "latitude": False,
+                    "longitude": False,
+                },
+                map_style="open-street-map",
+                zoom=3,
+                height=620,
+                labels={
+                    "technology_display": "Technology",
+                    "plant_code": "Plant code",
+                    "generator_id": "Generator ID",
+                    "nameplate_capacity_mw": "Capacity (MW)",
+                    "status": "Status",
+                },
+            )
+        else:
+            # Still show the transmission network even if assets lack coordinates.
+            line_lats, line_lons = [], []
+            for segments in transmission_groups.values():
+                for lons, lats in segments:
+                    line_lons.extend(lons)
+                    line_lats.extend(lats)
+            center_lat = sum(line_lats) / len(line_lats) if line_lats else 39.0
+            center_lon = sum(line_lons) / len(line_lons) if line_lons else -98.0
+            fig_map = go.Figure()
+            fig_map.update_layout(
+                map=dict(
+                    style="open-street-map",
+                    center=dict(lat=center_lat, lon=center_lon),
+                    zoom=4,
+                ),
+                height=620,
+            )
+
+        # Draw each voltage group as its own line trace so it appears in Plotly's legend.
+        for trace in line_traces:
+            fig_map.add_trace(trace)
 
         fig_map.update_layout(
             font=dict(family=FONT, size=13, color=BLACK),
             paper_bgcolor=BG,
+            plot_bgcolor=BG,
             margin=dict(t=10, b=10, l=10, r=10),
             legend=dict(
+                title=dict(text="Technology / transmission voltage"),
                 font=dict(family=FONT, size=12, color=BLACK),
-                bgcolor="rgba(251,249,247,0.92)",
+                bgcolor="rgba(251,249,247,0.94)",
+                x=1.01,
+                y=1,
+                xanchor="left",
+                yanchor="top",
             ),
         )
 
         st.plotly_chart(fig_map, use_container_width=True)
+
+        if line_color_map:
+            st.markdown(
+                transmission_legend_html(line_color_map),
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                f"Transmission network loaded: {transmission_segment_count:,} line segments. "
+                "Line colors represent the voltage reported in the uploaded dataset."
+            )
+        elif transmission_file is None:
+            st.info(
+                "To display the transmission grid, upload a GeoJSON line dataset or a "
+                "CSV with voltage plus line geometry / endpoint coordinates in the sidebar."
+            )
 
     st.caption(
         "A generator coordinate does not establish parcel boundaries, "
@@ -1680,6 +2109,20 @@ with tab_method:
         unsafe_allow_html=True,
     )
 
+    st.markdown("""
+    **Transmission grid color coding**
+
+    Transmission lines are colored by the kV value in the uploaded line dataset:
+    - **138 kV — orange**
+    - **240 kV — green**
+    - 69 kV — purple; 115 kV — blue; 161 kV — vermilion; 230 kV — violet;
+      345 kV — gold; 500 kV — deep red; 765 kV — charcoal.
+
+    Other reported voltage levels receive a separate color automatically. Lines
+    with no recognized voltage are shown in grey. The legend only appears for
+    voltage classes present in the uploaded transmission dataset.
+    """)
+
     st.markdown(f"""
 **Current dataset:** {source_label}
 
@@ -1778,949 +2221,6 @@ Some records may not have coordinates or reported storage energy capacity.
         status_table,
         use_container_width=True,
         hide_index=True,
-    )
-
-
-
-
-# ============================================================
-# TRANSMISSION GRID EXPLORER (ADDED FEATURE)
-# Upload the transmission Excel workbook and KMZ together.
-# Existing asset views and logic above are retained.
-# ============================================================
-
-@st.cache_data(show_spinner=False, max_entries=2)
-def parse_transmission_excel(excel_bytes):
-    """Read and standardize transmission-line attributes from Excel."""
-    df = pd.read_excel(io.BytesIO(excel_bytes), engine="openpyxl")
-    df.columns = [str(c).strip() for c in df.columns]
-
-    aliases = {
-        "line_id": [
-            "Transmission Line Unique Identifier", "ID", "Line ID", "Unique Identifier"
-        ],
-        "object_id": ["Object ID", "OBJECTID"],
-        "line_type": ["Line Type", "TYPE"],
-        "status": ["Operational Status of Line", "Status", "STATUS"],
-        "voltage_kv": ["Voltage (Kilovolts)", "Voltage", "VOLTAGE"],
-        "voltage_class": ["Voltage Class", "VOLT_CLASS"],
-        "owner": ["Transmission Line Ownership Entity", "Owner", "OWNER"],
-        "origin_substation": ["Origin Substation Name", "SUB_1", "Origin Substation"],
-        "destination_substation": ["Destination Substation Name", "SUB_2", "Destination Substation"],
-        "source": ["Data Source Reference", "Source", "SOURCE"],
-        "validation_method": ["Validation Method", "VAL_METHOD"],
-        "shape_length": ["Shape Length", "Shape__Length", "Shape Length.1"],
-    }
-    lookup = {re.sub(r"[^a-z0-9]+", "", c.lower()): c for c in df.columns}
-    for target, options in aliases.items():
-        if target not in df.columns:
-            for option in options:
-                key = re.sub(r"[^a-z0-9]+", "", option.lower())
-                if key in lookup:
-                    df[target] = df[lookup[key]]
-                    break
-        if target not in df.columns:
-            df[target] = "Unknown" if target != "voltage_kv" else pd.NA
-
-    df["line_id"] = df["line_id"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-    df["voltage_kv"] = pd.to_numeric(df["voltage_kv"], errors="coerce")
-    # The source uses -999999 as an unavailable/placeholder voltage value.
-    df.loc[df["voltage_kv"] <= 0, "voltage_kv"] = pd.NA
-    for c in ["line_type", "status", "voltage_class", "owner", "origin_substation", "destination_substation"]:
-        df[c] = df[c].fillna("Unknown").astype(str).str.strip()
-    return df
-
-
-def _desc_fields(description):
-    """Extract key/value attributes from the HTML table embedded in KML."""
-    text = html.unescape(description or "")
-    pairs = re.findall(r"<td[^>]*>\s*([^<]+?)\s*</td>\s*<td[^>]*>\s*([^<]*?)\s*</td>", text, flags=re.I)
-    return {re.sub(r"\s+", "", k).upper(): v.strip() for k, v in pairs}
-
-
-@st.cache_data(show_spinner=False, max_entries=2)
-def parse_transmission_kmz(kmz_bytes, max_points_per_line=12):
-    """Stream the KMZ KML and simplify line paths for browser performance."""
-    lines = []
-    nodes = []
-    ns = "{http://www.opengis.net/kml/2.2}"
-    with zipfile.ZipFile(io.BytesIO(kmz_bytes)) as archive:
-        kml_names = [n for n in archive.namelist() if n.lower().endswith(".kml")]
-        if not kml_names:
-            raise ValueError("The KMZ does not contain a KML file.")
-        with archive.open(kml_names[0]) as kml_stream:
-            for _, placemark in ET.iterparse(kml_stream, events=("end",)):
-                if placemark.tag != ns + "Placemark":
-                    continue
-                name_el = placemark.find(ns + "name")
-                desc_el = placemark.find(ns + "description")
-                attrs = _desc_fields(desc_el.text if desc_el is not None else "")
-                line_id = attrs.get("ID") or (name_el.text.strip() if name_el is not None and name_el.text else "")
-                object_id = attrs.get("OBJECTID", "")
-
-                # A placemark can contain one or more LineString elements.
-                paths = []
-                for coord_el in placemark.iter(ns + "coordinates"):
-                    raw = (coord_el.text or "").strip()
-                    if not raw:
-                        continue
-                    coords = []
-                    for token in raw.split():
-                        parts = token.split(",")
-                        if len(parts) >= 2:
-                            try:
-                                lon, lat = float(parts[0]), float(parts[1])
-                                if -180 <= lon <= 180 and -90 <= lat <= 90:
-                                    coords.append([lon, lat])
-                            except (TypeError, ValueError):
-                                pass
-                    if len(coords) >= 2:
-                        # Keep endpoints and evenly spaced intermediate vertices.
-                        if len(coords) > max_points_per_line:
-                            indexes = sorted(set(round(i * (len(coords) - 1) / (max_points_per_line - 1)) for i in range(max_points_per_line)))
-                            coords = [coords[i] for i in indexes]
-                        paths.append(coords)
-
-                if paths:
-                    # Most features contain one path. Preserve separate paths as separate records.
-                    for path_no, path in enumerate(paths):
-                        lines.append({
-                            "line_id": str(line_id).strip(),
-                            "object_id": str(object_id).strip(),
-                            "path": path,
-                        })
-                        nodes.append({"line_id": str(line_id).strip(), "end": "Origin", "longitude": path[0][0], "latitude": path[0][1]})
-                        nodes.append({"line_id": str(line_id).strip(), "end": "Destination", "longitude": path[-1][0], "latitude": path[-1][1]})
-                placemark.clear()
-    return pd.DataFrame(lines), pd.DataFrame(nodes)
-
-
-def find_repository_file(extension, preferred_terms):
-    """Find a data file committed alongside app.py, without a Streamlit uploader."""
-    repo_dir = Path(__file__).resolve().parent
-    candidates = [
-        p for p in repo_dir.iterdir()
-        if p.is_file() and p.suffix.lower() == extension.lower()
-        and not p.name.startswith(".")
-    ]
-    if not candidates:
-        return None
-    # Prefer files whose names match transmission/grid keywords.
-    def score(path):
-        name = path.name.lower()
-        return sum(1 for term in preferred_terms if term in name), path.stat().st_size
-    candidates.sort(key=score, reverse=True)
-    return candidates[0]
-
-
-
-
-def is_valid_kmz(path):
-    """Return True only when the file is a readable ZIP archive containing KML."""
-    try:
-        if path is None or not Path(path).is_file() or Path(path).stat().st_size < 4:
-            return False
-        if not zipfile.is_zipfile(path):
-            return False
-        with zipfile.ZipFile(path, "r") as archive:
-            return any(name.lower().endswith(".kml") for name in archive.namelist())
-    except (OSError, zipfile.BadZipFile):
-        return False
-
-
-def download_release_kmz(url, destination):
-    """Download and validate a real KMZ, rejecting HTML pages and LFS pointers."""
-    response = requests.get(
-        url,
-        headers={"User-Agent": "SunstripeLocationIntelligence/1.0", "Accept": "application/octet-stream"},
-        timeout=(20, 300),
-        allow_redirects=True,
-    )
-    response.raise_for_status()
-    content = response.content
-    if len(content) < 4 or not zipfile.is_zipfile(io.BytesIO(content)):
-        preview = content[:160].decode("utf-8", errors="replace").replace("\n", " ")
-        if content.startswith(b"version https://git-lfs.github.com/spec/v1"):
-            reason = "GitHub returned a Git LFS pointer, not the file content."
-        elif b"<html" in content[:500].lower() or b"<!doctype html" in content[:500].lower():
-            reason = "GitHub returned an HTML page instead of the KMZ asset."
-        else:
-            reason = f"The downloaded content is not a ZIP/KMZ archive. Response preview: {preview[:120]}"
-        raise ValueError(reason)
-    with zipfile.ZipFile(io.BytesIO(content), "r") as archive:
-        if not any(name.lower().endswith(".kml") for name in archive.namelist()):
-            raise ValueError("The downloaded ZIP does not contain a .kml file, so it is not a usable KMZ.")
-    Path(destination).write_bytes(content)
-    return Path(destination)
-
-
-@st.cache_data(show_spinner=False, max_entries=2)
-def parse_transmission_excel_file(file_path, file_mtime, file_size):
-    """Load transmission attributes from a workbook committed to the repository."""
-    del file_mtime, file_size  # Included in the cache key so file updates invalidate it.
-    df = pd.read_excel(file_path, engine="openpyxl")
-    df.columns = [str(c).strip() for c in df.columns]
-
-    aliases = {
-        "line_id": ["Transmission Line Unique Identifier", "ID", "Line ID", "Unique Identifier"],
-        "object_id": ["Object ID", "OBJECTID"],
-        "line_type": ["Line Type", "TYPE"],
-        "status": ["Operational Status of Line", "Status", "STATUS"],
-        "voltage_kv": ["Voltage (Kilovolts)", "Voltage", "VOLTAGE"],
-        "voltage_class": ["Voltage Class", "VOLT_CLASS"],
-        "owner": ["Transmission Line Ownership Entity", "Owner", "OWNER"],
-        "origin_substation": ["Origin Substation Name", "SUB_1", "Origin Substation"],
-        "destination_substation": ["Destination Substation Name", "SUB_2", "Destination Substation"],
-        "source": ["Data Source Reference", "Source", "SOURCE"],
-        "validation_method": ["Validation Method", "VAL_METHOD"],
-        "shape_length": ["Shape Length", "Shape__Length", "Shape Length.1"],
-    }
-    lookup = {re.sub(r"[^a-z0-9]+", "", c.lower()): c for c in df.columns}
-    for target, options in aliases.items():
-        if target not in df.columns:
-            for option in options:
-                key = re.sub(r"[^a-z0-9]+", "", option.lower())
-                if key in lookup:
-                    df[target] = df[lookup[key]]
-                    break
-        if target not in df.columns:
-            df[target] = pd.NA if target == "voltage_kv" else "Unknown"
-
-    df["line_id"] = df["line_id"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-    df["voltage_kv"] = pd.to_numeric(df["voltage_kv"], errors="coerce")
-    df.loc[df["voltage_kv"] <= 0, "voltage_kv"] = pd.NA
-    for c in ["line_type", "status", "voltage_class", "owner", "origin_substation", "destination_substation"]:
-        df[c] = df[c].fillna("Unknown").astype(str).str.strip()
-    return df
-
-
-@st.cache_data(show_spinner=False, max_entries=2)
-def parse_transmission_kmz_file(file_path, file_mtime, file_size, max_points_per_line=12):
-    """Read KML paths from a KMZ committed to the repository."""
-    del file_mtime, file_size  # Included in the cache key so file updates invalidate it.
-    lines = []
-    nodes = []
-    ns = "{http://www.opengis.net/kml/2.2}"
-    with zipfile.ZipFile(file_path) as archive:
-        kml_names = [n for n in archive.namelist() if n.lower().endswith(".kml")]
-        if not kml_names:
-            raise ValueError("The KMZ does not contain a KML file.")
-        with archive.open(kml_names[0]) as kml_stream:
-            for _, placemark in ET.iterparse(kml_stream, events=("end",)):
-                if placemark.tag != ns + "Placemark":
-                    continue
-                name_el = placemark.find(ns + "name")
-                desc_el = placemark.find(ns + "description")
-                attrs = _desc_fields(desc_el.text if desc_el is not None else "")
-                line_id = attrs.get("ID") or (name_el.text.strip() if name_el is not None and name_el.text else "")
-                object_id = attrs.get("OBJECTID", "")
-                paths = []
-                for coord_el in placemark.iter(ns + "coordinates"):
-                    raw = (coord_el.text or "").strip()
-                    if not raw:
-                        continue
-                    coords = []
-                    for token in raw.split():
-                        parts = token.split(",")
-                        if len(parts) >= 2:
-                            try:
-                                lon, lat = float(parts[0]), float(parts[1])
-                                if -180 <= lon <= 180 and -90 <= lat <= 90:
-                                    coords.append([lon, lat])
-                            except (TypeError, ValueError):
-                                pass
-                    if len(coords) >= 2:
-                        if len(coords) > max_points_per_line:
-                            indexes = sorted(set(round(i * (len(coords) - 1) / (max_points_per_line - 1)) for i in range(max_points_per_line)))
-                            coords = [coords[i] for i in indexes]
-                        paths.append(coords)
-                for path in paths:
-                    lines.append({"line_id": str(line_id).strip(), "object_id": str(object_id).strip(), "path": path})
-                    nodes.append({"line_id": str(line_id).strip(), "end": "Origin", "longitude": path[0][0], "latitude": path[0][1]})
-                    nodes.append({"line_id": str(line_id).strip(), "end": "Destination", "longitude": path[-1][0], "latitude": path[-1][1]})
-                placemark.clear()
-    return pd.DataFrame(lines), pd.DataFrame(nodes)
-
-
-with tab_grid:
-    st.markdown('<div class="section-title">US transmission line explorer</div>', unsafe_allow_html=True)
-    st.write(
-        "The transmission network is loaded automatically from files committed to your GitHub repository. "
-        "No file upload inside Streamlit is required. The Excel supplies line attributes and substation names; "
-        "the KMZ supplies the geographic line paths."
-    )
-
-    excel_path = find_repository_file(".xlsx", ["transmission", "line", "grid"])
-    kmz_path = find_repository_file(".kmz", ["transmission", "line", "grid"])
-
-    # A Git LFS pointer or HTML download can have a .kmz extension but is not
-    # a usable archive. Validate the local file before attempting to parse it.
-    if not is_valid_kmz(kmz_path):
-        transmission_release_url = (
-            "https://github.com/kartikv-hash/Location-Intelligence-/releases/"
-            "download/transmission-v1/"
-            "US_Electric_Power_Transmission_Lines_-5914890627387387697.kmz"
-        )
-        try:
-            with st.spinner("Validating transmission KMZ and checking the GitHub Release asset..."):
-                downloaded_kmz = Path("/tmp/US_Electric_Power_Transmission_Lines_-5914890627387387697.kmz")
-                kmz_path = download_release_kmz(transmission_release_url, downloaded_kmz)
-        except Exception as download_error:
-            st.error("The KMZ file was found, but it is not a valid KMZ archive, and the GitHub Release download did not return the real file.")
-            st.code(str(download_error))
-            st.markdown(
-                "**Fix:** Open the repository's **Releases** page and confirm that tag `transmission-v1` has the actual KMZ attached as a release asset. "
-                "Do not attach a Git LFS pointer or a GitHub webpage. If the KMZ is stored with Git LFS, configure Streamlit to retrieve the actual LFS content."
-            )
-            kmz_path = None
-
-    if excel_path is None or kmz_path is None:
-        st.error("Transmission files were not found next to app.py in the GitHub repository.")
-        st.markdown(
-            "**Upload both files to the same repository folder as `app.py`:**  "
-            "one `.xlsx` workbook and one `.kmz` file. Then commit the changes and let Streamlit redeploy."
-        )
-        st.caption("The app automatically selects the Excel and KMZ whose filenames contain transmission, line or grid, where possible.")
-    else:
-        st.caption(f"Excel source: `{excel_path.name}` · KMZ source: `{kmz_path.name}`")
-        st.info(
-            "The KMZ is large, so the first load may take several minutes. Parsed results are cached; "
-            "subsequent filter changes should not re-parse the files."
-        )
-        try:
-            with st.spinner("Loading repository Excel and parsing KMZ geometry. This may take a few minutes..."):
-                excel_stat = excel_path.stat()
-                kmz_stat = kmz_path.stat()
-                grid_attributes = parse_transmission_excel_file(
-                    str(excel_path), excel_stat.st_mtime, excel_stat.st_size
-                )
-                grid_lines, grid_nodes = parse_transmission_kmz_file(
-                    str(kmz_path), kmz_stat.st_mtime, kmz_stat.st_size
-                )
-
-                grid_lines["line_id"] = grid_lines["line_id"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-                grid_attributes["line_id"] = grid_attributes["line_id"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-                join_cols = [
-                    "line_id", "line_type", "status", "voltage_kv", "voltage_class", "owner",
-                    "origin_substation", "destination_substation", "source", "validation_method"
-                ]
-                attributes_for_join = grid_attributes[[c for c in join_cols if c in grid_attributes.columns]].drop_duplicates("line_id")
-                joined = grid_lines.merge(attributes_for_join, on="line_id", how="left")
-
-                node_attributes = attributes_for_join[[
-                    c for c in ["line_id", "origin_substation", "destination_substation"]
-                    if c in attributes_for_join.columns
-                ]].drop_duplicates("line_id")
-                node_df = grid_nodes.merge(node_attributes, on="line_id", how="left")
-                node_df["node_name"] = node_df.get("origin_substation", "Unknown")
-                destination_mask = node_df["end"].eq("Destination")
-                if "destination_substation" in node_df.columns:
-                    node_df.loc[destination_mask, "node_name"] = node_df.loc[destination_mask, "destination_substation"]
-                node_df["node_name"] = node_df["node_name"].fillna("Unknown").astype(str)
-
-            st.success(f"Loaded {len(joined):,} transmission-line geometry records from the repository KMZ.")
-
-            matched_lines = joined["voltage_kv"].notna().sum() if "voltage_kv" in joined else 0
-            g1, g2, g3, g4 = st.columns(4)
-            g1.metric("Line geometry records", f"{len(joined):,}")
-            g2.metric("Matched voltage records", f"{matched_lines:,}")
-            g3.metric("Reported line owners", f"{joined['owner'].replace('Unknown', pd.NA).nunique(dropna=True):,}" if "owner" in joined else "N/A")
-            g4.metric("Endpoint node records", f"{len(node_df):,}")
-
-            with st.expander("Filter the transmission network", expanded=True):
-                voltage_options = sorted(joined["voltage_class"].dropna().astype(str).unique()) if "voltage_class" in joined else []
-                chosen_voltage = st.multiselect("Voltage class", voltage_options, default=voltage_options, key="grid_voltage_filter")
-                status_options = sorted(joined["status"].dropna().astype(str).unique()) if "status" in joined else []
-                chosen_line_status = st.multiselect("Operational status", status_options, default=status_options, key="grid_status_filter")
-                owner_search = st.text_input("Filter by owner (optional)", key="grid_owner_filter", placeholder="Enter part of a utility / owner name")
-                show_nodes = st.checkbox("Show connected endpoint nodes / reported substations (may increase map load size)", value=False, key="grid_show_nodes")
-
-            grid_filtered = joined.copy()
-            if chosen_voltage and "voltage_class" in grid_filtered:
-                grid_filtered = grid_filtered[grid_filtered["voltage_class"].astype(str).isin(chosen_voltage)]
-            if chosen_line_status and "status" in grid_filtered:
-                grid_filtered = grid_filtered[grid_filtered["status"].astype(str).isin(chosen_line_status)]
-            if owner_search.strip() and "owner" in grid_filtered:
-                grid_filtered = grid_filtered[grid_filtered["owner"].astype(str).str.contains(owner_search.strip(), case=False, na=False, regex=False)]
-
-            visible_ids = set(grid_filtered["line_id"].astype(str))
-            node_filtered = node_df[node_df["line_id"].astype(str).isin(visible_ids)].copy()
-            if not node_filtered.empty:
-                node_filtered["_lon"] = node_filtered["longitude"].round(3)
-                node_filtered["_lat"] = node_filtered["latitude"].round(3)
-                node_filtered = node_filtered.drop_duplicates(subset=["node_name", "_lon", "_lat"])
-
-            st.caption(
-                f"Showing {len(grid_filtered):,} transmission-line paths after filters. "
-                "Endpoint nodes are located from line geometry and labelled with reported substation names from Excel."
-            )
-
-            if grid_filtered.empty:
-                st.warning("No transmission lines match these filters.")
-            else:
-                # IMPORTANT: send only the fields needed for map rendering to the
-                # browser. Sending the entire joined dataframe (94k paths plus all
-                # Excel attributes) can exceed Streamlit's 200 MB message limit.
-                map_columns = [
-                    "path", "line_id", "owner", "voltage_kv", "voltage_class",
-                    "status", "origin_substation", "destination_substation",
-                ]
-                map_columns = [c for c in map_columns if c in grid_filtered.columns]
-                map_data = grid_filtered[map_columns].copy()
-                map_data["path"] = map_data["path"].apply(
-                    lambda path: path if isinstance(path, list) else []
-                )
-
-                line_layer = pdk.Layer(
-                    "PathLayer",
-                    data=map_data,
-                    id="transmission_lines",
-                    get_path="path",
-                    get_color=[130, 70, 160, 190],
-                    get_width=3,
-                    width_min_pixels=2,
-                    width_scale=1,
-                    pickable=True,
-                    auto_highlight=True,
-                )
-                layers = [line_layer]
-                if show_nodes and not node_filtered.empty:
-                    # Deduplicate nearby endpoints to avoid sending 189k markers
-                    # to the browser. The full transmission-line geometry remains.
-                    node_filtered = node_filtered.copy()
-                    node_filtered["_lon_grid"] = node_filtered["longitude"].round(2)
-                    node_filtered["_lat_grid"] = node_filtered["latitude"].round(2)
-                    node_filtered = node_filtered.drop_duplicates(
-                        subset=["_lon_grid", "_lat_grid"]
-                    ).head(25000)
-                    node_map_data = node_filtered[
-                        ["longitude", "latitude", "node_name", "line_id", "end"]
-                    ].copy()
-                    node_layer = pdk.Layer(
-                        "ScatterplotLayer",
-                        data=node_map_data,
-                        get_position="[longitude, latitude]",
-                        get_radius=500,
-                        radius_min_pixels=2,
-                        radius_max_pixels=6,
-                        get_fill_color=[5, 7, 20, 210],
-                        get_line_color=[255, 255, 255, 220],
-                        line_width_min_pixels=1,
-                        pickable=True,
-                    )
-                    layers.append(node_layer)
-
-                view_state = pdk.ViewState(latitude=39.5, longitude=-98.35, zoom=3, pitch=0)
-                tooltip = {
-                    "html": "<b>Line ID:</b> {line_id}<br/><b>Owner:</b> {owner}<br/><b>Voltage:</b> {voltage_kv} kV<br/><b>Class:</b> {voltage_class}<br/><b>Status:</b> {status}<br/><b>Origin:</b> {origin_substation}<br/><b>Destination:</b> {destination_substation}",
-                    "style": {"backgroundColor": "#050714", "color": "white"},
-                }
-                # Click a line to select it. Streamlit returns the selected
-                # feature's properties, which we display below the map.
-                try:
-                    map_event = st.pydeck_chart(
-                        pdk.Deck(
-                            layers=layers,
-                            initial_view_state=view_state,
-                            tooltip=tooltip,
-                            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-                        ),
-                        height=620,
-                        use_container_width=True,
-                        on_select="rerun",
-                        selection_mode="single-object",
-                        key="transmission_line_map",
-                    )
-                except TypeError:
-                    # Older Streamlit versions don't support chart selection.
-                    map_event = None
-                    st.pydeck_chart(
-                        pdk.Deck(
-                            layers=layers,
-                            initial_view_state=view_state,
-                            tooltip=tooltip,
-                            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-                        ),
-                        height=620,
-                        use_container_width=True,
-                    )
-                    st.info(
-                        "Hover over a transmission line to see its summary. "
-                        "To click a line and open its details, update Streamlit "
-                        "to version 1.40 or later in requirements.txt."
-                    )
-
-                # Extract selected features from Streamlit's PyDeck selection event.
-                # Streamlit versions differ slightly in the shape of this payload.
-                selected_feature = None
-                if map_event is not None:
-                    try:
-                        selection = (
-                            map_event.get("selection", {})
-                            if isinstance(map_event, dict)
-                            else getattr(map_event, "selection", {})
-                        )
-                        objects = (
-                            selection.get("objects", {})
-                            if isinstance(selection, dict)
-                            else getattr(selection, "objects", {})
-                        )
-                        if isinstance(objects, dict):
-                            for layer_objects in objects.values():
-                                if layer_objects:
-                                    selected_feature = layer_objects[0]
-                                    break
-                    except Exception:
-                        selected_feature = None
-
-                if selected_feature is not None and not isinstance(selected_feature, dict):
-                    try:
-                        selected_feature = dict(selected_feature)
-                    except Exception:
-                        selected_feature = {}
-
-                selected_line_id = ""
-                if isinstance(selected_feature, dict):
-                    selected_line_id = str(selected_feature.get("line_id", "")).strip()
-
-                # Reliable fallback: users can paste a line ID from a map click,
-                # tooltip, or the records table if click-selection isn't supported
-                # by the deployed Streamlit version/browser.
-                with st.expander("Find a line by ID", expanded=not bool(selected_line_id)):
-                    lookup_id = st.text_input(
-                        "Transmission line ID",
-                        value=selected_line_id,
-                        placeholder="Enter or paste a line ID",
-                        key="grid_lookup_line_id",
-                    ).strip()
-                    lookup_clicked = st.button(
-                        "Show line information",
-                        key="grid_lookup_line_button",
-                    )
-                    if lookup_clicked and lookup_id:
-                        selected_line_id = lookup_id
-
-                selected_rows = (
-                    grid_filtered[
-                        grid_filtered["line_id"].astype(str).str.strip() == selected_line_id
-                    ]
-                    if selected_line_id else pd.DataFrame()
-                )
-
-                if not selected_rows.empty:
-                    selected_row = selected_rows.iloc[0]
-                    st.markdown("### Selected transmission line")
-                    d1, d2, d3 = st.columns(3)
-                    d1.metric("Line ID", str(selected_row.get("line_id", "Unknown")))
-                    voltage_value = selected_row.get("voltage_kv", pd.NA)
-                    d2.metric(
-                        "Voltage",
-                        f"{float(voltage_value):,.0f} kV"
-                        if pd.notna(voltage_value) else "Not reported",
-                    )
-                    d3.metric("Operational status", str(selected_row.get("status", "Not reported")))
-
-                    details = {
-                        "Line ID": selected_row.get("line_id", "Not reported"),
-                        "Object ID": selected_row.get("object_id", "Not reported"),
-                        "Line type": selected_row.get("line_type", "Not reported"),
-                        "Voltage (kV)": selected_row.get("voltage_kv", "Not reported"),
-                        "Voltage class": selected_row.get("voltage_class", "Not reported"),
-                        "Operational status": selected_row.get("status", "Not reported"),
-                        "Owner": selected_row.get("owner", "Not reported"),
-                        "Origin substation": selected_row.get("origin_substation", "Not reported"),
-                        "Destination substation": selected_row.get("destination_substation", "Not reported"),
-                        "Source": selected_row.get("source", "Not reported"),
-                        "Validation method": selected_row.get("validation_method", "Not reported"),
-                        "Shape length": selected_row.get("shape_length", "Not reported"),
-                    }
-                    details_df = pd.DataFrame(
-                        [{k: (v if pd.notna(v) else "Not reported") for k, v in details.items()}]
-                    ).T.reset_index()
-                    details_df.columns = ["Attribute", "Value"]
-                    st.dataframe(details_df, hide_index=True, use_container_width=True)
-                elif selected_line_id:
-                    st.warning(
-                        "No line with that ID was found in the currently filtered records. "
-                        "Clear or adjust filters, or use an ID from the Transmission line records table."
-                    )
-                else:
-                    st.info(
-                        "Click a transmission line to inspect it. If clicking does not select a line "
-                        "in your browser, open **Find a line by ID** and paste an ID from the records table. "
-                        "Hovering over a line shows a quick summary."
-                    )
-
-                with st.expander("Transmission line records", expanded=False):
-                    table_cols = [
-                        "line_id", "line_type", "status", "voltage_kv", "voltage_class", "owner",
-                        "origin_substation", "destination_substation", "source", "validation_method"
-                    ]
-                    table_cols = [c for c in table_cols if c in grid_filtered.columns]
-                    st.dataframe(grid_filtered[table_cols].drop(columns=["path"], errors="ignore"), use_container_width=True, hide_index=True, height=350)
-                    st.download_button(
-                        "Download filtered transmission lines CSV",
-                        data=grid_filtered.drop(columns=["path"], errors="ignore").to_csv(index=False).encode("utf-8"),
-                        file_name="sunstripe_transmission_lines_filtered.csv",
-                        mime="text/csv",
-                        key="download_grid_lines",
-                    )
-
-                st.warning(
-                    "Endpoint node positions are inferred from line geometry, not independently verified substation coordinates. "
-                    "These records do not establish available interconnection capacity."
-                )
-        except Exception as exc:
-            st.error("Could not load the transmission files from the repository.")
-            st.exception(exc)
-
-
-# ============================================================
-# PHASE 1: BESS SITE EXPLORER
-# Site selection, nearby infrastructure, node/price data when supplied.
-# This is a screening workflow, not an interconnection study or forecast.
-# ============================================================
-
-with tab_bess:
-    st.markdown('<div class="section-title">BESS Analysis · Phase 1</div>', unsafe_allow_html=True)
-    st.write(
-        "Select a candidate location to review nearby renewable assets and available grid geometry. "
-        "If a nodal price CSV is added to the repository, this workspace can also show the price history "
-        "for the nearest geolocated pricing node."
-    )
-
-    with st.expander("Candidate site", expanded=True):
-        site_c1, site_c2, site_c3 = st.columns([1, 1, 1])
-        with site_c1:
-            site_lat = st.number_input(
-                "Site latitude", min_value=-90.0, max_value=90.0,
-                value=31.0000, step=0.01, format="%.5f", key="bess_site_lat"
-            )
-        with site_c2:
-            site_lon = st.number_input(
-                "Site longitude", min_value=-180.0, max_value=180.0,
-                value=-99.0000, step=0.01, format="%.5f", key="bess_site_lon"
-            )
-        with site_c3:
-            search_radius_miles = st.slider(
-                "Nearby asset radius (miles)", min_value=5, max_value=100,
-                value=25, step=5, key="bess_radius_miles"
-            )
-
-        site_name = st.text_input(
-            "Candidate site name (optional)",
-            value="Candidate BESS Site",
-            key="bess_site_name",
-        )
-
-    def _haversine_miles(lat1, lon1, lat2_series, lon2_series):
-        import numpy as np
-        earth_radius_miles = 3958.7613
-        lat1r = np.radians(float(lat1))
-        lon1r = np.radians(float(lon1))
-        lat2r = np.radians(pd.to_numeric(lat2_series, errors="coerce"))
-        lon2r = np.radians(pd.to_numeric(lon2_series, errors="coerce"))
-        dlat = lat2r - lat1r
-        dlon = lon2r - lon1r
-        a = np.sin(dlat / 2) ** 2 + np.cos(lat1r) * np.cos(lat2r) * np.sin(dlon / 2) ** 2
-        return 2 * earth_radius_miles * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
-
-    site_point = pd.DataFrame([{
-        "name": site_name.strip() or "Candidate BESS Site",
-        "latitude": float(site_lat),
-        "longitude": float(site_lon),
-        "category": "Candidate site",
-    }])
-
-    # Nearby registered energy assets from the already loaded asset register.
-    nearby_assets = assets.copy()
-    for coord_col in ["latitude", "longitude"]:
-        if coord_col not in nearby_assets.columns:
-            nearby_assets[coord_col] = pd.NA
-        nearby_assets[coord_col] = pd.to_numeric(nearby_assets[coord_col], errors="coerce")
-
-    nearby_assets = nearby_assets[
-        nearby_assets["latitude"].between(-90, 90)
-        & nearby_assets["longitude"].between(-180, 180)
-    ].copy()
-
-    if not nearby_assets.empty:
-        nearby_assets["distance_miles"] = _haversine_miles(
-            site_lat, site_lon,
-            nearby_assets["latitude"], nearby_assets["longitude"]
-        )
-        nearby_assets = nearby_assets[
-            nearby_assets["distance_miles"] <= float(search_radius_miles)
-        ].sort_values("distance_miles")
-
-    # Search for an optional market-node price history committed to the repo.
-    # Suggested schema: node_id,node_name,latitude,longitude,timestamp,lmp_usd_mwh
-    repo_dir = Path(__file__).resolve().parent
-    price_candidates = []
-    for base in [repo_dir, repo_dir / "data"]:
-        if base.exists():
-            price_candidates.extend([
-                f for f in base.glob("*.csv")
-                if any(token in f.name.lower() for token in ["lmp", "nodal", "price", "market_node"])
-                and "renewable_asset_register" not in f.name.lower()
-            ])
-
-    price_df = pd.DataFrame()
-    price_file_used = None
-    price_load_error = None
-    if price_candidates:
-        # Prefer the most specifically named nodal/LMP file.
-        price_candidates.sort(
-            key=lambda f: (
-                "lmp" in f.name.lower(),
-                "node" in f.name.lower() or "nodal" in f.name.lower(),
-                f.stat().st_size,
-            ), reverse=True
-        )
-        price_file_used = price_candidates[0]
-        try:
-            price_df = pd.read_csv(price_file_used, low_memory=False)
-            price_df.columns = [str(c).strip() for c in price_df.columns]
-        except Exception as exc:
-            price_load_error = str(exc)
-            price_df = pd.DataFrame()
-
-    def _find_col(df, options):
-        normalized = {column_key(c): c for c in df.columns}
-        for opt in options:
-            if column_key(opt) in normalized:
-                return normalized[column_key(opt)]
-        for opt in options:
-            opt_key = column_key(opt)
-            for norm, original in normalized.items():
-                if opt_key and opt_key in norm:
-                    return original
-        return None
-
-    node_lat_col = _find_col(price_df, ["latitude", "node latitude", "lat"])
-    node_lon_col = _find_col(price_df, ["longitude", "node longitude", "lon", "lng"])
-    price_value_col = _find_col(price_df, ["lmp_usd_mwh", "lmp", "total lmp", "price", "settlement point price"])
-    timestamp_col = _find_col(price_df, ["timestamp", "datetime", "interval ending", "date time", "time"])
-    node_id_col = _find_col(price_df, ["node_id", "pricing node id", "pnode id", "settlement point", "node id"])
-    node_name_col = _find_col(price_df, ["node_name", "pricing node name", "pnode name", "node name", "settlement point name"])
-
-    price_nodes = pd.DataFrame()
-    if not price_df.empty and node_lat_col and node_lon_col:
-        price_df[node_lat_col] = pd.to_numeric(price_df[node_lat_col], errors="coerce")
-        price_df[node_lon_col] = pd.to_numeric(price_df[node_lon_col], errors="coerce")
-        price_nodes = price_df[
-            price_df[node_lat_col].between(-90, 90)
-            & price_df[node_lon_col].between(-180, 180)
-        ].copy()
-        if not price_nodes.empty:
-            price_nodes["_distance_miles"] = _haversine_miles(
-                site_lat, site_lon, price_nodes[node_lat_col], price_nodes[node_lon_col]
-            )
-            # One map point per node, using the closest record's location.
-            node_group_key = node_id_col or node_name_col
-            if node_group_key:
-                price_nodes = price_nodes.sort_values("_distance_miles").drop_duplicates(node_group_key)
-            else:
-                price_nodes = price_nodes.sort_values("_distance_miles").drop_duplicates([node_lat_col, node_lon_col])
-            price_nodes = price_nodes.sort_values("_distance_miles")
-
-    # Nearest market price node, only if node coordinates were supplied.
-    nearest_node = None
-    if not price_nodes.empty:
-        nearest_node = price_nodes.iloc[0]
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Candidate site", site_name.strip() or "Unnamed site")
-    k2.metric("Registered assets in radius", f"{len(nearby_assets):,}")
-    if nearest_node is not None:
-        k3.metric("Nearest pricing node", f"{nearest_node.get(node_name_col, nearest_node.get(node_id_col, 'Node'))}", f"{nearest_node['_distance_miles']:.1f} mi away")
-    else:
-        k3.metric("Pricing nodes located", "Not available")
-
-    # Build a local map from the nearby asset register and nearby transmission
-    # line geometries. This avoids sending the entire national geometry to this tab.
-    map_layers = []
-    nearby_line_records = []
-    max_degrees_lat = float(search_radius_miles) / 69.0
-    cos_lat = max(0.15, abs(__import__("math").cos(__import__("math").radians(float(site_lat)))))
-    max_degrees_lon = float(search_radius_miles) / (69.0 * cos_lat)
-
-    if "grid_lines" in globals() and isinstance(grid_lines, pd.DataFrame) and not grid_lines.empty and "path" in grid_lines.columns:
-        for _, line_row in grid_lines.iterrows():
-            path = line_row.get("path")
-            if not isinstance(path, list) or len(path) < 2:
-                continue
-            # Quick bounding-box test before adding paths to the local map.
-            lons = [pt[0] for pt in path if isinstance(pt, (list, tuple)) and len(pt) >= 2]
-            lats = [pt[1] for pt in path if isinstance(pt, (list, tuple)) and len(pt) >= 2]
-            if not lons or not lats:
-                continue
-            if max(lats) < site_lat - max_degrees_lat or min(lats) > site_lat + max_degrees_lat:
-                continue
-            if max(lons) < site_lon - max_degrees_lon or min(lons) > site_lon + max_degrees_lon:
-                continue
-            nearby_line_records.append({
-                "line_id": str(line_row.get("line_id", "Unknown")),
-                "path": path,
-                "owner": str(line_row.get("owner", "Unknown")),
-                "voltage_kv": line_row.get("voltage_kv", pd.NA),
-                "status": str(line_row.get("status", "Unknown")),
-            })
-
-    if nearby_line_records:
-        map_layers.append(pdk.Layer(
-            "PathLayer",
-            data=pd.DataFrame(nearby_line_records),
-            get_path="path",
-            get_color=[130, 74, 157, 180],
-            get_width=2,
-            width_min_pixels=1,
-            pickable=True,
-            auto_highlight=True,
-        ))
-
-    if not nearby_assets.empty:
-        asset_map = nearby_assets.copy()
-        asset_map["_color"] = asset_map["technology_display"].map({
-            "Solar": [217, 167, 46, 210],
-            "Wind": [65, 152, 106, 210],
-            "BESS": [57, 121, 204, 230],
-        }).apply(lambda x: x if isinstance(x, list) else [137, 129, 123, 200])
-        map_layers.append(pdk.Layer(
-            "ScatterplotLayer", data=asset_map,
-            get_position="[longitude, latitude]", get_radius=700,
-            radius_min_pixels=3, radius_max_pixels=10,
-            get_fill_color="_color", get_line_color=[255, 255, 255, 220],
-            line_width_min_pixels=1, pickable=True,
-        ))
-
-    if not price_nodes.empty:
-        node_map = price_nodes.copy()
-        node_map["_node_label"] = node_map[node_name_col].astype(str) if node_name_col else (
-            node_map[node_id_col].astype(str) if node_id_col else "Pricing node"
-        )
-        map_layers.append(pdk.Layer(
-            "ScatterplotLayer", data=node_map,
-            get_position=f"[{node_lon_col}, {node_lat_col}]",
-            get_radius=1200, radius_min_pixels=5, radius_max_pixels=12,
-            get_fill_color=[30, 120, 200, 230],
-            get_line_color=[255, 255, 255, 230],
-            line_width_min_pixels=1, pickable=True,
-        ))
-
-    map_layers.append(pdk.Layer(
-        "ScatterplotLayer", data=site_point,
-        get_position="[longitude, latitude]", get_radius=1800,
-        radius_min_pixels=8, radius_max_pixels=15,
-        get_fill_color=[232, 57, 45, 255],
-        get_line_color=[5, 7, 20, 255], line_width_min_pixels=2,
-        pickable=True,
-    ))
-
-    st.markdown("### Candidate site and nearby infrastructure")
-    st.caption(
-        f"Showing the selected site and registered assets within {search_radius_miles} miles. "
-        "Transmission lines are included where their geometry intersects the site's search area."
-    )
-    deck = pdk.Deck(
-        layers=map_layers,
-        initial_view_state=pdk.ViewState(
-            latitude=float(site_lat), longitude=float(site_lon), zoom=8, pitch=0
-        ),
-        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-        tooltip={"text": "{plant_name}\n{technology_display}\n{line_id}\n{owner}\n{voltage_kv}"},
-    )
-    st.pydeck_chart(deck, height=520, use_container_width=True)
-
-    left, right = st.columns(2)
-    with left:
-        st.markdown("### Nearby renewable and storage assets")
-        if nearby_assets.empty:
-            st.info("No geolocated asset-register records were found within this radius. This does not mean the area has no projects.")
-        else:
-            display_cols = [
-                "plant_name", "technology_display", "nameplate_capacity_mw",
-                "state", "county", "entity_name", "distance_miles"
-            ]
-            display_cols = [c for c in display_cols if c in nearby_assets.columns]
-            view_assets = nearby_assets[display_cols].head(100).copy()
-            if "distance_miles" in view_assets:
-                view_assets["distance_miles"] = view_assets["distance_miles"].round(2)
-            st.dataframe(view_assets, use_container_width=True, hide_index=True, height=300)
-
-    with right:
-        st.markdown("### Nearby transmission geometry")
-        if nearby_line_records:
-            st.metric("Line paths intersecting search area", f"{len(nearby_line_records):,}")
-            st.dataframe(
-                pd.DataFrame(nearby_line_records).drop(columns=["path"], errors="ignore").head(100),
-                use_container_width=True, hide_index=True, height=300,
-            )
-            st.caption("Geometry proximity is not evidence of spare capacity or a feasible point of interconnection.")
-        else:
-            st.info("No transmission-line geometry was available in this search area. Check that the Transmission Grid dataset loaded.")
-
-    st.markdown("### Nearest market pricing node")
-    if price_df.empty:
-        st.warning(
-            "No nodal price CSV was found. Phase 1 site exploration is available, but node pricing and LMP charts require a geolocated historical price dataset."
-        )
-        st.markdown(
-            "**Expected repository CSV:** `nodal_lmp_prices.csv` in the repository root or `data/` folder. "
-            "Include node name/ID, latitude, longitude, timestamp and an LMP/price column."
-        )
-        if price_load_error:
-            st.caption(f"Price-file read error: {price_load_error}")
-    elif not node_lat_col or not node_lon_col or not price_value_col:
-        st.warning(
-            f"Found `{price_file_used.name}`, but it needs node coordinates and an LMP/price column to plot prices. "
-            "Supported fields include latitude, longitude, timestamp and LMP_USD_MWh."
-        )
-        st.dataframe(price_df.head(10), use_container_width=True, hide_index=True)
-    elif nearest_node is None:
-        st.warning("The price file has no valid geolocated pricing nodes near the candidate site.")
-    else:
-        nearest_label = str(nearest_node.get(node_name_col, nearest_node.get(node_id_col, "Pricing node")))
-        st.write(f"**Nearest node:** {nearest_label} · **Distance:** {nearest_node['_distance_miles']:.2f} miles")
-        if timestamp_col:
-            price_df[timestamp_col] = pd.to_datetime(price_df[timestamp_col], errors="coerce", utc=True)
-        price_df[price_value_col] = pd.to_numeric(price_df[price_value_col], errors="coerce")
-        if node_id_col and node_id_col in nearest_node.index:
-            selected_node_mask = price_df[node_id_col].astype(str) == str(nearest_node[node_id_col])
-        elif node_name_col and node_name_col in nearest_node.index:
-            selected_node_mask = price_df[node_name_col].astype(str) == str(nearest_node[node_name_col])
-        else:
-            selected_node_mask = (
-                (pd.to_numeric(price_df[node_lat_col], errors="coerce") - float(nearest_node[node_lat_col])).abs() < 1e-6
-            ) & (
-                (pd.to_numeric(price_df[node_lon_col], errors="coerce") - float(nearest_node[node_lon_col])).abs() < 1e-6
-            )
-        node_history = price_df[selected_node_mask].copy()
-        node_history = node_history.dropna(subset=[price_value_col])
-        if not node_history.empty:
-            p1, p2, p3, p4 = st.columns(4)
-            p1.metric("Mean LMP", f"${node_history[price_value_col].mean():,.2f}/MWh")
-            p2.metric("Median LMP", f"${node_history[price_value_col].median():,.2f}/MWh")
-            p3.metric("Negative-price intervals", f"{(node_history[price_value_col] < 0).mean() * 100:.1f}%")
-            p4.metric("Price observations", f"{len(node_history):,}")
-            if timestamp_col and node_history[timestamp_col].notna().any():
-                node_history = node_history.sort_values(timestamp_col)
-                price_fig = px.line(
-                    node_history, x=timestamp_col, y=price_value_col,
-                    title=f"Historical nodal prices · {nearest_label}",
-                    labels={timestamp_col: "Timestamp", price_value_col: "LMP ($/MWh)"},
-                )
-                st.plotly_chart(style_chart(price_fig), use_container_width=True)
-            else:
-                st.info("Price history is available, but no parseable timestamp column was detected for a time-series chart.")
-        else:
-            st.warning("The nearest node is located, but no price records matched its node ID/name.")
-
-    st.markdown("### Phase 1 scope and data limitations")
-    st.info(
-        "This first phase supports candidate-coordinate screening, nearby asset discovery, transmission geometry proximity, "
-        "and optional historical nodal-price visualization. It does not yet calculate 2h/4h battery arbitrage, "
-        "confirm interconnection capacity, identify binding contingency constraints, or replace a formal interconnection study."
     )
 
 
