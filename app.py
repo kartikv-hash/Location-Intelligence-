@@ -65,6 +65,13 @@ CUSTOM_VOLTAGE_PALETTE = [
 EIA_PAGE = "https://www.eia.gov/electricity/data/eia860m/index.php"
 MAX_UPLOAD_MB = 50
 
+# Plotly renamed the Mapbox Express API to MapLibre in newer releases.
+# Select the available API at runtime so the app works across Streamlit Cloud
+# environments instead of crashing on px.scatter_mapbox in newer Plotly.
+USE_MAPLIBRE_API = hasattr(px, "scatter_map") and hasattr(go, "Scattermap")
+MAP_TRACE_CLASS = go.Scattermap if USE_MAPLIBRE_API else go.Scattermapbox
+MAP_LAYOUT_KEY = "map" if USE_MAPLIBRE_API else "mapbox"
+
 
 # ============================================================
 # THEME: SUNSTRIPE BLACK, IVORY AND RED
@@ -1456,7 +1463,7 @@ def transmission_line_traces(grouped_lines):
             all_lat.append(None)
 
         traces.append(
-            go.Scattermapbox(
+            MAP_TRACE_CLASS(
                 lon=all_lon,
                 lat=all_lat,
                 mode="lines",
@@ -1994,8 +2001,8 @@ with tab_map:
         )
     else:
         if not map_data.empty:
-            fig_map = px.scatter_mapbox(
-                map_data,
+            map_kwargs = dict(
+                data_frame=map_data,
                 lat="latitude",
                 lon="longitude",
                 color="technology_display",
@@ -2011,7 +2018,6 @@ with tab_map:
                     "latitude": False,
                     "longitude": False,
                 },
-                mapbox_style="open-street-map",
                 center=map_center,
                 zoom=map_zoom,
                 height=620,
@@ -2023,15 +2029,19 @@ with tab_map:
                     "status": "Status",
                 },
             )
+            if USE_MAPLIBRE_API:
+                fig_map = px.scatter_map(map_style="open-street-map", **map_kwargs)
+            else:
+                fig_map = px.scatter_mapbox(mapbox_style="open-street-map", **map_kwargs)
         else:
             # Still show grid/transmission geometry when no renewable asset points exist.
             fig_map = go.Figure()
             fig_map.update_layout(
-                mapbox=dict(
+                **{MAP_LAYOUT_KEY: dict(
                     style="open-street-map",
                     center=map_center,
                     zoom=map_zoom,
-                ),
+                )},
                 height=620,
             )
 
@@ -2043,7 +2053,7 @@ with tab_map:
         if not grid_points.empty:
             grid_hover = grid_points["name"].fillna("Grid / substation").astype(str)
             fig_map.add_trace(
-                go.Scattermapbox(
+                MAP_TRACE_CLASS(
                     lon=grid_points["longitude"],
                     lat=grid_points["latitude"],
                     mode="markers",
@@ -2061,11 +2071,11 @@ with tab_map:
             )
 
         fig_map.update_layout(
-            mapbox=dict(
+            **{MAP_LAYOUT_KEY: dict(
                 style="open-street-map",
                 center=map_center,
                 zoom=map_zoom,
-            ),
+            )},
             font=dict(family=FONT, size=13, color=BLACK),
             paper_bgcolor=BG,
             plot_bgcolor=BG,
