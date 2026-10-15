@@ -1918,221 +1918,218 @@ def style_chart(fig):
 
 
 # ============================================================
-# WORKSPACE TABS
-# ============================================================
-
-tab_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
-    "Location explorer",
-    "Project register",
-    "Project details",
-    "Technology analytics",
-    "Data & limitations",
-])
-
-
-# ============================================================
 # LOCATION EXPLORER
 # ============================================================
 
-with tab_map:
-    st.markdown(
-        '<div class="section-title">Geographic asset intelligence</div>',
-        unsafe_allow_html=True,
+st.markdown(
+    '<div class="section-title">Geographic asset intelligence</div>',
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    f"Current technology selection: {technology_choice}. "
+    "Only records containing valid coordinates appear on the map."
+)
+
+if transmission_load_errors:
+    with st.expander("Transmission / grid file loading errors", expanded=True):
+        for message in transmission_load_errors:
+            st.warning(message)
+
+map_data = filtered.dropna(
+    subset=["latitude", "longitude"]
+).copy()
+
+map_data = map_data[
+    map_data["latitude"].between(-90, 90)
+    & map_data["longitude"].between(-180, 180)
+]
+
+line_traces, line_color_map = transmission_line_traces(transmission_groups)
+
+# Fit the interactive map to ALL visible layers, not only renewable assets.
+# Otherwise Plotly's auto-zoom can focus on assets and leave transmission
+# lines or substations outside the viewport.
+view_lats = []
+view_lons = []
+if not map_data.empty:
+    view_lats.extend(pd.to_numeric(map_data["latitude"], errors="coerce").dropna().tolist())
+    view_lons.extend(pd.to_numeric(map_data["longitude"], errors="coerce").dropna().tolist())
+for grouped_segments in transmission_groups.values():
+    for segment_lons, segment_lats in grouped_segments:
+        view_lons.extend(v for v in segment_lons if v is not None and pd.notna(v))
+        view_lats.extend(v for v in segment_lats if v is not None and pd.notna(v))
+if not grid_points.empty:
+    view_lats.extend(pd.to_numeric(grid_points["latitude"], errors="coerce").dropna().tolist())
+    view_lons.extend(pd.to_numeric(grid_points["longitude"], errors="coerce").dropna().tolist())
+
+if view_lats and view_lons:
+    lat_min, lat_max = min(view_lats), max(view_lats)
+    lon_min, lon_max = min(view_lons), max(view_lons)
+    map_center = {"lat": (lat_min + lat_max) / 2, "lon": (lon_min + lon_max) / 2}
+    lat_span = max(lat_max - lat_min, 0.15)
+    lon_span = max(lon_max - lon_min, 0.15)
+    # Approximate a good initial zoom for a wide desktop map; lower it a
+    # little so line endpoints at the edges are not clipped.
+    import math
+    zoom_x = math.log2((360 * 1350) / (256 * lon_span))
+    zoom_y = math.log2((180 * 560) / (256 * lat_span))
+    map_zoom = max(1.0, min(12.0, min(zoom_x, zoom_y) - 0.65))
+else:
+    map_center = {"lat": 39.0, "lon": -98.0}
+    map_zoom = 3.0
+
+if map_data.empty and not line_traces and grid_points.empty:
+    st.warning(
+        "No usable asset coordinates or transmission/grid features are available. "
+        "Commit the existing transmission CSV/KMZ files to the GitHub repository, "
+        "or add files with the sidebar uploader."
     )
-
-    st.caption(
-        f"Current technology selection: {technology_choice}. "
-        "Only records containing valid coordinates appear on the map."
-    )
-
-    if transmission_load_errors:
-        with st.expander("Transmission / grid file loading errors", expanded=True):
-            for message in transmission_load_errors:
-                st.warning(message)
-
-    map_data = filtered.dropna(
-        subset=["latitude", "longitude"]
-    ).copy()
-
-    map_data = map_data[
-        map_data["latitude"].between(-90, 90)
-        & map_data["longitude"].between(-180, 180)
-    ]
-
-    line_traces, line_color_map = transmission_line_traces(transmission_groups)
-
-    # Fit the interactive map to ALL visible layers, not only renewable assets.
-    # Otherwise Plotly's auto-zoom can focus on assets and leave transmission
-    # lines or substations outside the viewport.
-    view_lats = []
-    view_lons = []
+else:
     if not map_data.empty:
-        view_lats.extend(pd.to_numeric(map_data["latitude"], errors="coerce").dropna().tolist())
-        view_lons.extend(pd.to_numeric(map_data["longitude"], errors="coerce").dropna().tolist())
-    for grouped_segments in transmission_groups.values():
-        for segment_lons, segment_lats in grouped_segments:
-            view_lons.extend(v for v in segment_lons if v is not None and pd.notna(v))
-            view_lats.extend(v for v in segment_lats if v is not None and pd.notna(v))
-    if not grid_points.empty:
-        view_lats.extend(pd.to_numeric(grid_points["latitude"], errors="coerce").dropna().tolist())
-        view_lons.extend(pd.to_numeric(grid_points["longitude"], errors="coerce").dropna().tolist())
-
-    if view_lats and view_lons:
-        lat_min, lat_max = min(view_lats), max(view_lats)
-        lon_min, lon_max = min(view_lons), max(view_lons)
-        map_center = {"lat": (lat_min + lat_max) / 2, "lon": (lon_min + lon_max) / 2}
-        lat_span = max(lat_max - lat_min, 0.15)
-        lon_span = max(lon_max - lon_min, 0.15)
-        # Approximate a good initial zoom for a wide desktop map; lower it a
-        # little so line endpoints at the edges are not clipped.
-        import math
-        zoom_x = math.log2((360 * 1350) / (256 * lon_span))
-        zoom_y = math.log2((180 * 560) / (256 * lat_span))
-        map_zoom = max(1.0, min(12.0, min(zoom_x, zoom_y) - 0.65))
-    else:
-        map_center = {"lat": 39.0, "lon": -98.0}
-        map_zoom = 3.0
-
-    if map_data.empty and not line_traces and grid_points.empty:
-        st.warning(
-            "No usable asset coordinates or transmission/grid features are available. "
-            "Commit the existing transmission CSV/KMZ files to the GitHub repository, "
-            "or add files with the sidebar uploader."
+        map_kwargs = dict(
+            data_frame=map_data,
+            lat="latitude",
+            lon="longitude",
+            color="technology_display",
+            color_discrete_map=TECH_COLORS,
+            hover_name="plant_name",
+            hover_data={
+                "state": True,
+                "county": True,
+                "plant_code": True,
+                "generator_id": True,
+                "nameplate_capacity_mw": ":,.2f",
+                "status": True,
+                "latitude": False,
+                "longitude": False,
+            },
+            center=map_center,
+            zoom=map_zoom,
+            height=620,
+            labels={
+                "technology_display": "Technology",
+                "plant_code": "Plant code",
+                "generator_id": "Generator ID",
+                "nameplate_capacity_mw": "Capacity (MW)",
+                "status": "Status",
+            },
         )
-    else:
-        if not map_data.empty:
-            map_kwargs = dict(
-                data_frame=map_data,
-                lat="latitude",
-                lon="longitude",
-                color="technology_display",
-                color_discrete_map=TECH_COLORS,
-                hover_name="plant_name",
-                hover_data={
-                    "state": True,
-                    "county": True,
-                    "plant_code": True,
-                    "generator_id": True,
-                    "nameplate_capacity_mw": ":,.2f",
-                    "status": True,
-                    "latitude": False,
-                    "longitude": False,
-                },
-                center=map_center,
-                zoom=map_zoom,
-                height=620,
-                labels={
-                    "technology_display": "Technology",
-                    "plant_code": "Plant code",
-                    "generator_id": "Generator ID",
-                    "nameplate_capacity_mw": "Capacity (MW)",
-                    "status": "Status",
-                },
-            )
-            if USE_MAPLIBRE_API:
-                fig_map = px.scatter_map(map_style="open-street-map", **map_kwargs)
-            else:
-                fig_map = px.scatter_mapbox(mapbox_style="open-street-map", **map_kwargs)
+        if USE_MAPLIBRE_API:
+            fig_map = px.scatter_map(map_style="open-street-map", **map_kwargs)
         else:
-            # Still show grid/transmission geometry when no renewable asset points exist.
-            fig_map = go.Figure()
-            fig_map.update_layout(
-                **{MAP_LAYOUT_KEY: dict(
-                    style="open-street-map",
-                    center=map_center,
-                    zoom=map_zoom,
-                )},
-                height=620,
-            )
-
-        # Draw each voltage group as its own line trace so it appears in Plotly's legend.
-        for trace in line_traces:
-            fig_map.add_trace(trace)
-
-        # Display KMZ/KML/CSV grid points (e.g. substations) as a distinct map layer.
-        if not grid_points.empty:
-            grid_hover = grid_points["name"].fillna("Grid / substation").astype(str)
-            fig_map.add_trace(
-                MAP_TRACE_CLASS(
-                    lon=grid_points["longitude"],
-                    lat=grid_points["latitude"],
-                    mode="markers",
-                    marker=dict(size=9, color=NAVY, opacity=1, symbol="square"),
-                    name="Grid / substation",
-                    legendgroup="grid-points",
-                    showlegend=True,
-                    text=grid_hover,
-                    customdata=grid_points[["voltage_label", "source_file"]].astype(str).to_numpy(),
-                    hovertemplate=(
-                        "<b>%{text}</b><br>Grid feature<br>Voltage: %{customdata[0]}"
-                        "<br>Source: %{customdata[1]}<extra></extra>"
-                    ),
-                )
-            )
-
+            fig_map = px.scatter_mapbox(mapbox_style="open-street-map", **map_kwargs)
+    else:
+        # Still show grid/transmission geometry when no renewable asset points exist.
+        fig_map = go.Figure()
         fig_map.update_layout(
             **{MAP_LAYOUT_KEY: dict(
                 style="open-street-map",
                 center=map_center,
                 zoom=map_zoom,
             )},
-            font=dict(family=FONT, size=13, color=BLACK),
-            paper_bgcolor=BG,
-            plot_bgcolor=BG,
-            margin=dict(t=10, b=10, l=10, r=10),
-            legend=dict(
-                title=dict(text="Technology / transmission voltage"),
-                font=dict(family=FONT, size=12, color=BLACK),
-                bgcolor="rgba(251,249,247,0.94)",
-                x=0.015,
-                y=0.985,
-                xanchor="left",
-                yanchor="top",
-            ),
+            height=620,
         )
 
-        st.plotly_chart(fig_map, use_container_width=True)
+    # Draw each voltage group as its own line trace so it appears in Plotly's legend.
+    for trace in line_traces:
+        fig_map.add_trace(trace)
 
-        if line_color_map:
-            st.markdown(
-                transmission_legend_html(line_color_map),
-                unsafe_allow_html=True,
+    # Display KMZ/KML/CSV grid points (e.g. substations) as a distinct map layer.
+    if not grid_points.empty:
+        grid_hover = grid_points["name"].fillna("Grid / substation").astype(str)
+        fig_map.add_trace(
+            MAP_TRACE_CLASS(
+                lon=grid_points["longitude"],
+                lat=grid_points["latitude"],
+                mode="markers",
+                marker=dict(size=9, color=NAVY, opacity=1, symbol="square"),
+                name="Grid / substation",
+                legendgroup="grid-points",
+                showlegend=True,
+                text=grid_hover,
+                customdata=grid_points[["voltage_label", "source_file"]].astype(str).to_numpy(),
+                hovertemplate=(
+                    "<b>%{text}</b><br>Grid feature<br>Voltage: %{customdata[0]}"
+                    "<br>Source: %{customdata[1]}<extra></extra>"
+                ),
             )
+        )
 
-        if transmission_source_names:
-            st.success(
-                f"Grid data loaded from {len(transmission_source_names)} file(s): "
-                + ", ".join(transmission_source_names)
-                + f". Transmission line segments: {transmission_segment_count:,}; "
-                + f"grid point features: {len(grid_points):,}."
-            )
-            if transmission_groups:
-                if set(transmission_groups.keys()) == {"Unknown kV"}:
-                    st.warning(
-                        "Transmission lines were loaded, but the source files did not expose a "
-                        "recognizable voltage value. Those lines are shown in grey. Check that "
-                        "the CSV has a voltage/kV column or the KML/KMZ placemarks include "
-                        "voltage attributes or names such as '138 kV'."
-                    )
-                voltage_summary = pd.DataFrame([
-                    {"Voltage": voltage_label, "Line segments": len(segments), "Map color": line_color_map.get(voltage_label, UNKNOWN_VOLTAGE_COLOR)}
-                    for voltage_label, segments in sorted(
-                        transmission_groups.items(),
-                        key=lambda item: (voltage_value_from_label(item[0]), item[0]),
-                    )
-                ])
-                with st.expander("Transmission voltage layers loaded", expanded=False):
-                    st.dataframe(voltage_summary, hide_index=True, use_container_width=True)
-        elif not line_color_map and grid_points.empty:
-            st.info(
-                "No repository grid files were detected. Make sure the grid CSV/KMZ "
-                "files are committed to GitHub, or upload them in the sidebar."
-            )
-
-    st.caption(
-        "A generator coordinate does not establish parcel boundaries, "
-        "buildable acreage or interconnection feasibility."
+    fig_map.update_layout(
+        **{MAP_LAYOUT_KEY: dict(
+            style="open-street-map",
+            center=map_center,
+            zoom=map_zoom,
+        )},
+        font=dict(family=FONT, size=13, color=BLACK),
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        margin=dict(t=10, b=10, l=10, r=10),
+        legend=dict(
+            title=dict(text="Technology / transmission voltage"),
+            font=dict(family=FONT, size=12, color=BLACK),
+            bgcolor="rgba(251,249,247,0.94)",
+            x=0.015,
+            y=0.985,
+            xanchor="left",
+            yanchor="top",
+        ),
     )
+
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    if line_color_map:
+        st.markdown(
+            transmission_legend_html(line_color_map),
+            unsafe_allow_html=True,
+        )
+
+    if transmission_source_names:
+        st.success(
+            f"Grid data loaded from {len(transmission_source_names)} file(s): "
+            + ", ".join(transmission_source_names)
+            + f". Transmission line segments: {transmission_segment_count:,}; "
+            + f"grid point features: {len(grid_points):,}."
+        )
+        if transmission_groups:
+            if set(transmission_groups.keys()) == {"Unknown kV"}:
+                st.warning(
+                    "Transmission lines were loaded, but the source files did not expose a "
+                    "recognizable voltage value. Those lines are shown in grey. Check that "
+                    "the CSV has a voltage/kV column or the KML/KMZ placemarks include "
+                    "voltage attributes or names such as '138 kV'."
+                )
+            voltage_summary = pd.DataFrame([
+                {"Voltage": voltage_label, "Line segments": len(segments), "Map color": line_color_map.get(voltage_label, UNKNOWN_VOLTAGE_COLOR)}
+                for voltage_label, segments in sorted(
+                    transmission_groups.items(),
+                    key=lambda item: (voltage_value_from_label(item[0]), item[0]),
+                )
+            ])
+            with st.expander("Transmission voltage layers loaded", expanded=False):
+                st.dataframe(voltage_summary, hide_index=True, use_container_width=True)
+    elif not line_color_map and grid_points.empty:
+        st.info(
+            "No repository grid files were detected. Make sure the grid CSV/KMZ "
+            "files are committed to GitHub, or upload them in the sidebar."
+        )
+
+st.caption(
+    "A generator coordinate does not establish parcel boundaries, "
+    "buildable acreage or interconnection feasibility."
+)
+
+
+# ============================================================
+# WORKSPACE TABS
+# ============================================================
+tab_register, tab_details, tab_analytics, tab_method = st.tabs([
+    "Project register",
+    "Project details",
+    "Technology analytics",
+    "Data & limitations",
+])
 
 
 # ============================================================
