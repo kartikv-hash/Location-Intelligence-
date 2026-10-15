@@ -3,6 +3,8 @@ import io
 import json
 import re
 import zipfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from urllib.parse import urljoin
 
 import pandas as pd
@@ -1079,34 +1081,233 @@ def find_voltage_column(columns):
     return None
 
 
-def load_transmission_lines(upload):
-    """Return {voltage_label: [(lons, lats), ...]} and feature count."""
-    if upload is None:
-        return {}, 0
+def _read_grid_source(source, filename=None):
+    """Read a path, Streamlit upload, or bytes into (filename, content)."""
+    if isinstance(source, (str, Path)):
+        path = Path(source)
+        return filename or path.name, path.read_bytes()
+    if isinstance(source, (bytes, bytearray)):
+        return filename or "grid_data.bin", bytes(source)
+    name = filename or getattr(source, "name", "grid_data.csv")
+    if hasattr(source, "seek"):
+        source.seek(0)
+    content = source.read()
+    if hasattr(source, "seek"):
+        source.seek(0)
+    return name, content
 
-    check_upload_size(upload)
-    filename = upload.name.lower()
+
+def _voltage_from_properties(properties, fallback_text=""):
+    """Read voltage from a property field, with a label/name fallback."""
+    properties = properties or {}
+    col = find_voltage_column(properties.keys())
+    if col is not None and properties.get(col) not in (None, ""):
+        candidate = properties.get(col)
+        if pd.notna(candidate) and str(candidate).strip():
+            return candidate
+
+    for key, value in properties.items():
+        key_norm = column_key(key)
+        if ("voltage" in key_norm or key_norm.endswith("kv") or key_norm == "volts") and value not in (None, ""):
+            if pd.notna(value) and str(value).strip():
+                return value
+
+    text = str(fallback_text or "")
+    match = re.search(r"(?i)(\d+(?:\.\d+)?)\s*k\s*v\b", text)
+    if match:
+        return match.group(1) + " kV"
+    # KML layer names occasionally encode voltage in volts, e.g. 138000.
+    match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", text)
+    if match:
+        value = int(match.group(1))
+        if 10000 <= value <= 800000:
+            return value
+    return None
+
+
+def _parse_kml_coordinates(text):
+    """Parse KML coordinates: lon,lat[,alt] whitespace separated."""
+    points = []
+    if not text:
+        return points
+    for token in text.strip().split():
+        parts = token.split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            points.append((float(parts[0]), float(parts[1])))
+        except (TypeError, ValueError):
+            continue
+    return points
+
+
+def _local_xml_name(tag):
+    return tag.rsplit("}", 1)[-1].lower() if "}" in tag else tag.lower()
+
+
+def _parse_kml_or_kmz(content, filename):
+    """Parse KML/KMZ line geometries and point features with voltage metadata."""
     grouped = {}
+    points = []
+    segment_count = 0
+
+    def add_line(coords, voltage_raw):
+        nonlocal segment_count
+        clean = clean_coordinate_segment(coords)
+        if not clean:
+            return
+        label = normalize_voltage_kv(voltage_raw)
+        grouped.setdefault(label, []).append(
+            ([point[0] for point in clean], [point[1] for point in clean])
+        )
+        segment_count += 1
+
+    if filename.lower().endswith(".kmz"):
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(content))
+        except zipfile.BadZipFile as exc:
+            raise ValueError("The KMZ file is not a valid ZIP/KMZ archive.") from exc
+        with archive:
+            kml_names = [n for n in archive.namelist() if n.lower().endswith(".kml")]
+            if not kml_names:
+                raise ValueError("No KML document was found inside the KMZ archive.")
+            documents = [(n, archive.read(n)) for n in kml_names]
+    else:
+        documents = [(filename, content)]
+
+    for document_name, xml_content in documents:
+        try:
+            root = ET.fromstring(xml_content)
+        except ET.ParseError as exc:
+            raise ValueError(f"Could not parse KML document {document_name}: {exc}") from exc
+
+        placemarks = [el for el in root.iter() if _local_xml_name(el.tag) == "placemark"]
+        for placemark in placemarks:
+            name = ""
+            description = ""
+            properties = {}
+
+            for child in placemark.iter():
+                tag = _local_xml_name(child.tag)
+                if tag == "name" and not name:
+                    name = (child.text or "").strip()
+                elif tag == "description" and not description:
+                    description = (child.text or "").strip()
+                elif tag == "data":
+                    prop_name = child.attrib.get("name")
+                    if prop_name:
+                        for sub in child:
+                            if _local_xml_name(sub.tag) == "value":
+                                properties[prop_name] = (sub.text or "").strip()
+                elif tag == "simpledata":
+                    prop_name = child.attrib.get("name")
+                    if prop_name:
+                        properties[prop_name] = (child.text or "").strip()
+
+            voltage_raw = _voltage_from_properties(
+                properties, f"{name} {description} {document_name}"
+            )
+
+            for element in placemark.iter():
+                tag = _local_xml_name(element.tag)
+                if tag not in {"linestring", "point"}:
+                    continue
+                coord_text = ""
+                for child in element.iter():
+                    if _local_xml_name(child.tag) == "coordinates":
+                        coord_text = child.text or ""
+                        break
+                coords = _parse_kml_coordinates(coord_text)
+
+                if tag == "linestring":
+                    add_line(coords, voltage_raw)
+                elif tag == "point" and coords:
+                    lon, lat = coords[0]
+                    if -180 <= lon <= 180 and -90 <= lat <= 90:
+                        points.append({
+                            "name": name or "Grid / substation",
+                            "longitude": lon,
+                            "latitude": lat,
+                            "voltage_label": normalize_voltage_kv(voltage_raw),
+                            "source_file": filename,
+                        })
+
+    return grouped, segment_count, points
+
+
+def load_transmission_lines(source, filename=None):
+    """Load CSV, GeoJSON, KML or KMZ; return lines, count and grid points."""
+    if source is None:
+        return {}, 0, []
+
+    name, content = _read_grid_source(source, filename)
+    if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise ValueError(f"Grid file exceeds the {MAX_UPLOAD_MB} MB limit.")
+
+    lower_name = name.lower()
+    grouped = {}
+    points = []
     segment_count = 0
 
     def add_segment(coords, voltage_raw):
         nonlocal segment_count
-        points = clean_coordinate_segment(coords)
-        if not points:
+        cleaned = clean_coordinate_segment(coords)
+        if not cleaned:
             return
         label = normalize_voltage_kv(voltage_raw)
         grouped.setdefault(label, []).append(
-            ([p[0] for p in points], [p[1] for p in points])
+            ([point[0] for point in cleaned], [point[1] for point in cleaned])
         )
         segment_count += 1
 
-    def add_geojson_geometry(geometry, voltage_raw):
-        for segment in iter_line_segments(geometry):
-            add_segment(segment, voltage_raw)
+    def add_point(lon, lat, point_name, voltage_raw=None):
+        try:
+            lon, lat = float(lon), float(lat)
+        except (TypeError, ValueError):
+            return
+        if -180 <= lon <= 180 and -90 <= lat <= 90:
+            points.append({
+                "name": str(point_name or "Grid / substation"),
+                "longitude": lon,
+                "latitude": lat,
+                "voltage_label": normalize_voltage_kv(voltage_raw),
+                "source_file": name,
+            })
 
-    if filename.endswith((".geojson", ".json")):
-        upload.seek(0)
-        document = json.load(upload)
+    def add_geometry(geometry, properties=None, label_text=""):
+        if not isinstance(geometry, dict):
+            return
+        properties = properties or {}
+        voltage_raw = _voltage_from_properties(properties, label_text)
+        geom_type = geometry.get("type", "")
+        coords = geometry.get("coordinates")
+
+        if geom_type == "Feature":
+            props = geometry.get("properties") or properties
+            add_geometry(geometry.get("geometry") or {}, props, label_text)
+        elif geom_type == "GeometryCollection":
+            for child in geometry.get("geometries", []):
+                add_geometry(child, properties, label_text)
+        elif geom_type == "LineString":
+            add_segment(coords, voltage_raw)
+        elif geom_type == "MultiLineString":
+            for segment in coords or []:
+                add_segment(segment, voltage_raw)
+        elif geom_type == "Point" and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            add_point(coords[0], coords[1], label_text, voltage_raw)
+        elif geom_type == "MultiPoint":
+            for pt in coords or []:
+                if len(pt) >= 2:
+                    add_point(pt[0], pt[1], label_text, voltage_raw)
+
+    if lower_name.endswith((".kmz", ".kml")):
+        grouped, segment_count, points = _parse_kml_or_kmz(content, name)
+
+    elif lower_name.endswith((".geojson", ".json")):
+        try:
+            document = json.loads(content.decode("utf-8-sig"))
+        except Exception as exc:
+            raise ValueError(f"Cannot read GeoJSON/JSON file: {exc}") from exc
 
         if document.get("type") == "FeatureCollection":
             features = document.get("features", [])
@@ -1117,17 +1318,22 @@ def load_transmission_lines(upload):
 
         for feature in features:
             properties = feature.get("properties") or {}
-            voltage_col = find_voltage_column(properties.keys())
-            voltage_raw = properties.get(voltage_col) if voltage_col else None
-            add_geojson_geometry(feature.get("geometry") or {}, voltage_raw)
+            feature_name = (
+                properties.get("name") or properties.get("Name")
+                or properties.get("substation") or properties.get("id") or name
+            )
+            add_geometry(feature.get("geometry") or {}, properties, str(feature_name))
 
-    elif filename.endswith(".csv"):
-        upload.seek(0)
-        df = pd.read_csv(upload)
-        normalized_columns = {column_key(c): c for c in df.columns}
+    elif lower_name.endswith(".csv"):
+        try:
+            df = pd.read_csv(io.BytesIO(content))
+        except Exception as exc:
+            raise ValueError(f"Cannot read grid CSV: {exc}") from exc
+
+        norm_cols = {column_key(c): c for c in df.columns}
         voltage_col = find_voltage_column(df.columns)
         geometry_col = next(
-            (normalized_columns[k] for k in ["geometry", "geojson", "linegeometry", "coordinates", "wkt"] if k in normalized_columns),
+            (norm_cols[k] for k in ["geometry", "geojson", "linegeometry", "coordinates", "wkt"] if k in norm_cols),
             None,
         )
 
@@ -1137,16 +1343,19 @@ def load_transmission_lines(upload):
             "to_lon": ["tolon", "tolongitude", "endlon", "endlongitude", "lon2", "longitude2", "x2"],
             "to_lat": ["tolat", "tolatitude", "endlat", "endlatitude", "lat2", "latitude2", "y2"],
         }
-        endpoint_cols = {}
-        for standard, aliases in endpoint_aliases.items():
-            endpoint_cols[standard] = next(
-                (normalized_columns[a] for a in aliases if a in normalized_columns),
-                None,
-            )
+        endpoint_cols = {
+            standard: next((norm_cols[a] for a in aliases if a in norm_cols), None)
+            for standard, aliases in endpoint_aliases.items()
+        }
+
+        lat_col = next((norm_cols[k] for k in ["latitude", "lat", "y"] if k in norm_cols), None)
+        lon_col = next((norm_cols[k] for k in ["longitude", "lon", "long", "lng", "x"] if k in norm_cols), None)
+        name_col = next((norm_cols[k] for k in ["name", "label", "substation", "substationname", "gridname", "facilityname", "plantname", "id"] if k in norm_cols), None)
 
         for _, row in df.iterrows():
             voltage_raw = row.get(voltage_col) if voltage_col else None
-            handled = False
+            feature_name = row.get(name_col) if name_col else name
+            handled_line = False
 
             if geometry_col is not None and pd.notna(row.get(geometry_col)):
                 raw_geometry = row.get(geometry_col)
@@ -1160,54 +1369,74 @@ def load_transmission_lines(upload):
                     except (json.JSONDecodeError, TypeError):
                         for segment in parse_wkt_linestring(text):
                             add_segment(segment, voltage_raw)
-                            handled = True
+                            handled_line = True
 
                 if isinstance(parsed, dict):
-                    if parsed.get("type") == "Feature":
-                        add_geojson_geometry(parsed.get("geometry") or {}, voltage_raw)
-                    elif parsed.get("type") in {"LineString", "MultiLineString", "GeometryCollection"}:
-                        add_geojson_geometry(parsed, voltage_raw)
-                    elif isinstance(parsed.get("coordinates"), list):
-                        # Geometry column may contain only a coordinate array.
-                        coordinates = parsed["coordinates"]
-                        if coordinates and isinstance(coordinates[0], (list, tuple)):
-                            if coordinates[0] and isinstance(coordinates[0][0], (int, float)):
-                                add_segment(coordinates, voltage_raw)
-                            else:
-                                for segment in coordinates:
-                                    add_segment(segment, voltage_raw)
-                    handled = True
-
+                    add_geometry(parsed, {voltage_col: voltage_raw} if voltage_col else {}, str(feature_name))
+                    handled_line = True
                 elif isinstance(parsed, list) and parsed:
                     if isinstance(parsed[0], (list, tuple)) and len(parsed[0]) >= 2 and isinstance(parsed[0][0], (int, float)):
                         add_segment(parsed, voltage_raw)
                     else:
                         for segment in parsed:
                             add_segment(segment, voltage_raw)
-                    handled = True
+                    handled_line = True
 
-            if not handled and all(endpoint_cols.values()):
+            if not handled_line and all(endpoint_cols.values()):
                 try:
-                    coords = [
+                    add_segment([
                         [float(row[endpoint_cols["from_lon"]]), float(row[endpoint_cols["from_lat"]])],
                         [float(row[endpoint_cols["to_lon"]]), float(row[endpoint_cols["to_lat"]])],
-                    ]
-                    add_segment(coords, voltage_raw)
+                    ], voltage_raw)
+                    handled_line = True
                 except (TypeError, ValueError, KeyError):
-                    continue
-    else:
-        raise ValueError("Transmission grid upload must be GeoJSON, JSON or CSV.")
+                    pass
 
-    if segment_count == 0:
+            # Point-like grid/substation CSVs can be shown at the same time.
+            if lat_col is not None and lon_col is not None:
+                add_point(row.get(lon_col), row.get(lat_col), feature_name, voltage_raw)
+
+    else:
+        raise ValueError("Supported grid files: CSV, GeoJSON, JSON, KML and KMZ.")
+
+    if segment_count == 0 and not points:
         raise ValueError(
-            "No valid transmission line geometries were found. Use GeoJSON with "
-            "LineString/MultiLineString features, or CSV with a geometry/WKT field "
-            "or from/to latitude and longitude columns. Include a voltage/voltage_kv "
-            "property or column for voltage-based colors."
+            "No valid grid geometries or points were found. Use a KMZ/KML with "
+            "LineString or Point features, GeoJSON with line/point geometry, or "
+            "CSV with WKT/GeoJSON geometry, endpoint coordinates, or latitude/longitude."
         )
 
-    return grouped, segment_count
+    return grouped, segment_count, points
 
+
+def discover_repository_grid_files():
+    """Find grid/transmission CSV/KMZ/KML files committed to the repo."""
+    root = Path(__file__).resolve().parent
+    excluded_dirs = {".git", ".venv", "venv", "__pycache__", ".streamlit", "node_modules"}
+    grid_name_pattern = re.compile(
+        r"(transmission|transmission.?line|power.?line|grid|substation|electric.?line|network)",
+        re.IGNORECASE,
+    )
+    candidates = []
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in excluded_dirs for part in path.parts):
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in {".csv", ".geojson", ".json", ".kml", ".kmz"}:
+            continue
+        if path.name.lower() == "renewable_asset_register.csv":
+            continue
+
+        # KMZ/KML files are treated as spatial/grid files; CSV/JSON files must
+        # have grid-oriented filenames to avoid loading unrelated datasets.
+        if suffix in {".kmz", ".kml"} or grid_name_pattern.search(path.stem):
+            candidates.append(path)
+
+    # Load structured line datasets before point layers; stable ordering helps reproducibility.
+    return sorted(candidates, key=lambda p: (p.suffix.lower() in {".csv"}, str(p).lower()))
 
 def transmission_line_traces(grouped_lines):
     """Create map line traces plus the exact colors used for the legend."""
@@ -1334,16 +1563,23 @@ with st.sidebar:
         )
 
     st.divider()
-    st.markdown("### Transmission grid")
-    st.caption("Upload transmission lines to show voltage-colored linework on the map.")
-    transmission_file = st.file_uploader(
-        "Transmission lines (GeoJSON or CSV)",
-        type=["geojson", "json", "csv"],
+    st.markdown("### Transmission & grid")
+    repository_grid_files = discover_repository_grid_files()
+    if repository_grid_files:
+        st.caption("Auto-detected repository grid files:")
+        for grid_path in repository_grid_files:
+            st.caption(f"• {grid_path.relative_to(Path(__file__).resolve().parent)}")
+    else:
+        st.caption("No grid files found in the repository yet.")
+    st.caption("Repository grid files load automatically. Upload additional files only if needed.")
+    transmission_files = st.file_uploader(
+        "Additional transmission / grid files",
+        type=["geojson", "json", "csv", "kml", "kmz"],
+        accept_multiple_files=True,
         key="transmission_grid_upload",
         help=(
-            "Recommended: GeoJSON LineString/MultiLineString features with a "
-            "voltage or voltage_kv property. CSV also supports WKT/GeoJSON geometry "
-            "or from/to latitude-longitude columns."
+            "Supported: CSV line/point data, GeoJSON, KML and KMZ. Files already "
+            "committed to GitHub are detected automatically by filename or spatial format."
         ),
     )
 
@@ -1397,20 +1633,45 @@ except Exception as exc:
     st.stop()
 
 
-# Load uploaded transmission lines independently from the asset data.
+# Load repository transmission/grid files automatically. Uploads are additive.
 transmission_groups = {}
 transmission_segment_count = 0
-transmission_load_error = None
+grid_point_records = []
+transmission_source_names = []
+transmission_load_errors = []
 
-if transmission_file is not None:
+repository_grid_files = discover_repository_grid_files()
+
+sources_to_load = [(path, path.name) for path in repository_grid_files]
+for uploaded_grid_file in (transmission_files or []):
+    sources_to_load.append((uploaded_grid_file, uploaded_grid_file.name))
+
+for grid_source, grid_filename in sources_to_load:
     try:
-        transmission_file.seek(0)
-        transmission_groups, transmission_segment_count = load_transmission_lines(
-            transmission_file
+        if hasattr(grid_source, "seek"):
+            grid_source.seek(0)
+        groups, count, points = load_transmission_lines(
+            grid_source,
+            filename=grid_filename,
         )
+        for voltage_label, segments in groups.items():
+            transmission_groups.setdefault(voltage_label, []).extend(segments)
+        transmission_segment_count += count
+        grid_point_records.extend(points)
+        transmission_source_names.append(grid_filename)
     except Exception as exc:
-        transmission_load_error = str(exc)
-        st.sidebar.error(f"Transmission line upload: {exc}")
+        transmission_load_errors.append(f"{grid_filename}: {exc}")
+
+if transmission_load_errors:
+    with st.sidebar.expander("Grid file warnings", expanded=False):
+        for message in transmission_load_errors:
+            st.warning(message)
+
+grid_points = pd.DataFrame(grid_point_records)
+if not grid_points.empty:
+    grid_points = grid_points.drop_duplicates(
+        subset=["name", "longitude", "latitude", "source_file"]
+    ).reset_index(drop=True)
 
 
 # ============================================================
@@ -1688,11 +1949,11 @@ with tab_map:
 
     line_traces, line_color_map = transmission_line_traces(transmission_groups)
 
-    if map_data.empty and not line_traces:
+    if map_data.empty and not line_traces and grid_points.empty:
         st.warning(
-            "No usable asset coordinates or transmission lines are available. "
-            "Upload an asset dataset with latitude/longitude and/or a transmission "
-            "line GeoJSON/CSV in the sidebar."
+            "No usable asset coordinates or transmission/grid features are available. "
+            "Commit the existing transmission CSV/KMZ files to the GitHub repository, "
+            "or add files with the sidebar uploader."
         )
     else:
         if not map_data.empty:
@@ -1725,14 +1986,17 @@ with tab_map:
                 },
             )
         else:
-            # Still show the transmission network even if assets lack coordinates.
-            line_lats, line_lons = [], []
+            # Still show grid/transmission geometry when no renewable asset points exist.
+            map_lats, map_lons = [], []
             for segments in transmission_groups.values():
                 for lons, lats in segments:
-                    line_lons.extend(lons)
-                    line_lats.extend(lats)
-            center_lat = sum(line_lats) / len(line_lats) if line_lats else 39.0
-            center_lon = sum(line_lons) / len(line_lons) if line_lons else -98.0
+                    map_lons.extend([v for v in lons if v is not None])
+                    map_lats.extend([v for v in lats if v is not None])
+            if not grid_points.empty:
+                map_lats.extend(grid_points["latitude"].astype(float).tolist())
+                map_lons.extend(grid_points["longitude"].astype(float).tolist())
+            center_lat = sum(map_lats) / len(map_lats) if map_lats else 39.0
+            center_lon = sum(map_lons) / len(map_lons) if map_lons else -98.0
             fig_map = go.Figure()
             fig_map.update_layout(
                 map=dict(
@@ -1746,6 +2010,27 @@ with tab_map:
         # Draw each voltage group as its own line trace so it appears in Plotly's legend.
         for trace in line_traces:
             fig_map.add_trace(trace)
+
+        # Display KMZ/KML/CSV grid points (e.g. substations) as a distinct map layer.
+        if not grid_points.empty:
+            grid_hover = grid_points["name"].fillna("Grid / substation").astype(str)
+            fig_map.add_trace(
+                go.Scattermap(
+                    lon=grid_points["longitude"],
+                    lat=grid_points["latitude"],
+                    mode="markers",
+                    marker=dict(size=8, color=NAVY, opacity=0.9),
+                    name="Grid / substation",
+                    legendgroup="grid-points",
+                    showlegend=True,
+                    text=grid_hover,
+                    customdata=grid_points[["voltage_label", "source_file"]].astype(str).to_numpy(),
+                    hovertemplate=(
+                        "<b>%{text}</b><br>Grid feature<br>Voltage: %{customdata[0]}"
+                        "<br>Source: %{customdata[1]}<extra></extra>"
+                    ),
+                )
+            )
 
         fig_map.update_layout(
             font=dict(family=FONT, size=13, color=BLACK),
@@ -1770,14 +2055,18 @@ with tab_map:
                 transmission_legend_html(line_color_map),
                 unsafe_allow_html=True,
             )
-            st.caption(
-                f"Transmission network loaded: {transmission_segment_count:,} line segments. "
-                "Line colors represent the voltage reported in the uploaded dataset."
+
+        if transmission_source_names:
+            st.success(
+                f"Grid data loaded from {len(transmission_source_names)} file(s): "
+                + ", ".join(transmission_source_names)
+                + f". Transmission line segments: {transmission_segment_count:,}; "
+                + f"grid point features: {len(grid_points):,}."
             )
-        elif transmission_file is None:
+        elif not line_color_map and grid_points.empty:
             st.info(
-                "To display the transmission grid, upload a GeoJSON line dataset or a "
-                "CSV with voltage plus line geometry / endpoint coordinates in the sidebar."
+                "No repository grid files were detected. Make sure the grid CSV/KMZ "
+                "files are committed to GitHub, or upload them in the sidebar."
             )
 
     st.caption(
@@ -2207,6 +2496,9 @@ Some records may not have coordinates or reported storage energy capacity.
         {"Feature": "Repository CSV normalization", "Status": "Implemented"},
         {"Feature": "CSV, XLS and XLSX upload", "Status": "Implemented"},
         {"Feature": "Optional EIA workbook connector", "Status": "Internet required"},
+        {"Feature": "Repository transmission CSV/KMZ auto-discovery", "Status": "Implemented"},
+        {"Feature": "Voltage-colored transmission lines + legend", "Status": "Implemented"},
+        {"Feature": "Grid/substation points from spatial data", "Status": "When point geometry is present"},
         {"Feature": "Parcel ownership / valuation", "Status": "Not connected"},
         {"Feature": "Verified interconnection capacity", "Status": "Not connected"},
         {"Feature": "Live power-market prices", "Status": "Not connected"},
