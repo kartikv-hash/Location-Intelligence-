@@ -1269,13 +1269,14 @@ def style_chart(fig):
 # WORKSPACE TABS
 # ============================================================
 
-tab_map, tab_register, tab_details, tab_analytics, tab_method, tab_grid = st.tabs([
+tab_map, tab_register, tab_details, tab_analytics, tab_method, tab_grid, tab_bess = st.tabs([
     "Location explorer",
     "Project register",
     "Project details",
     "Technology analytics",
     "Data & limitations",
     "Transmission grid",
+    "BESS Analysis",
 ])
 
 
@@ -2372,6 +2373,355 @@ with tab_grid:
         except Exception as exc:
             st.error("Could not load the transmission files from the repository.")
             st.exception(exc)
+
+
+# ============================================================
+# PHASE 1: BESS SITE EXPLORER
+# Site selection, nearby infrastructure, node/price data when supplied.
+# This is a screening workflow, not an interconnection study or forecast.
+# ============================================================
+
+with tab_bess:
+    st.markdown('<div class="section-title">BESS Analysis · Phase 1</div>', unsafe_allow_html=True)
+    st.write(
+        "Select a candidate location to review nearby renewable assets and available grid geometry. "
+        "If a nodal price CSV is added to the repository, this workspace can also show the price history "
+        "for the nearest geolocated pricing node."
+    )
+
+    with st.expander("Candidate site", expanded=True):
+        site_c1, site_c2, site_c3 = st.columns([1, 1, 1])
+        with site_c1:
+            site_lat = st.number_input(
+                "Site latitude", min_value=-90.0, max_value=90.0,
+                value=31.0000, step=0.01, format="%.5f", key="bess_site_lat"
+            )
+        with site_c2:
+            site_lon = st.number_input(
+                "Site longitude", min_value=-180.0, max_value=180.0,
+                value=-99.0000, step=0.01, format="%.5f", key="bess_site_lon"
+            )
+        with site_c3:
+            search_radius_miles = st.slider(
+                "Nearby asset radius (miles)", min_value=5, max_value=100,
+                value=25, step=5, key="bess_radius_miles"
+            )
+
+        site_name = st.text_input(
+            "Candidate site name (optional)",
+            value="Candidate BESS Site",
+            key="bess_site_name",
+        )
+
+    def _haversine_miles(lat1, lon1, lat2_series, lon2_series):
+        import numpy as np
+        earth_radius_miles = 3958.7613
+        lat1r = np.radians(float(lat1))
+        lon1r = np.radians(float(lon1))
+        lat2r = np.radians(pd.to_numeric(lat2_series, errors="coerce"))
+        lon2r = np.radians(pd.to_numeric(lon2_series, errors="coerce"))
+        dlat = lat2r - lat1r
+        dlon = lon2r - lon1r
+        a = np.sin(dlat / 2) ** 2 + np.cos(lat1r) * np.cos(lat2r) * np.sin(dlon / 2) ** 2
+        return 2 * earth_radius_miles * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+
+    site_point = pd.DataFrame([{
+        "name": site_name.strip() or "Candidate BESS Site",
+        "latitude": float(site_lat),
+        "longitude": float(site_lon),
+        "category": "Candidate site",
+    }])
+
+    # Nearby registered energy assets from the already loaded asset register.
+    nearby_assets = assets.copy()
+    for coord_col in ["latitude", "longitude"]:
+        if coord_col not in nearby_assets.columns:
+            nearby_assets[coord_col] = pd.NA
+        nearby_assets[coord_col] = pd.to_numeric(nearby_assets[coord_col], errors="coerce")
+
+    nearby_assets = nearby_assets[
+        nearby_assets["latitude"].between(-90, 90)
+        & nearby_assets["longitude"].between(-180, 180)
+    ].copy()
+
+    if not nearby_assets.empty:
+        nearby_assets["distance_miles"] = _haversine_miles(
+            site_lat, site_lon,
+            nearby_assets["latitude"], nearby_assets["longitude"]
+        )
+        nearby_assets = nearby_assets[
+            nearby_assets["distance_miles"] <= float(search_radius_miles)
+        ].sort_values("distance_miles")
+
+    # Search for an optional market-node price history committed to the repo.
+    # Suggested schema: node_id,node_name,latitude,longitude,timestamp,lmp_usd_mwh
+    repo_dir = Path(__file__).resolve().parent
+    price_candidates = []
+    for base in [repo_dir, repo_dir / "data"]:
+        if base.exists():
+            price_candidates.extend([
+                f for f in base.glob("*.csv")
+                if any(token in f.name.lower() for token in ["lmp", "nodal", "price", "market_node"])
+                and "renewable_asset_register" not in f.name.lower()
+            ])
+
+    price_df = pd.DataFrame()
+    price_file_used = None
+    price_load_error = None
+    if price_candidates:
+        # Prefer the most specifically named nodal/LMP file.
+        price_candidates.sort(
+            key=lambda f: (
+                "lmp" in f.name.lower(),
+                "node" in f.name.lower() or "nodal" in f.name.lower(),
+                f.stat().st_size,
+            ), reverse=True
+        )
+        price_file_used = price_candidates[0]
+        try:
+            price_df = pd.read_csv(price_file_used, low_memory=False)
+            price_df.columns = [str(c).strip() for c in price_df.columns]
+        except Exception as exc:
+            price_load_error = str(exc)
+            price_df = pd.DataFrame()
+
+    def _find_col(df, options):
+        normalized = {column_key(c): c for c in df.columns}
+        for opt in options:
+            if column_key(opt) in normalized:
+                return normalized[column_key(opt)]
+        for opt in options:
+            opt_key = column_key(opt)
+            for norm, original in normalized.items():
+                if opt_key and opt_key in norm:
+                    return original
+        return None
+
+    node_lat_col = _find_col(price_df, ["latitude", "node latitude", "lat"])
+    node_lon_col = _find_col(price_df, ["longitude", "node longitude", "lon", "lng"])
+    price_value_col = _find_col(price_df, ["lmp_usd_mwh", "lmp", "total lmp", "price", "settlement point price"])
+    timestamp_col = _find_col(price_df, ["timestamp", "datetime", "interval ending", "date time", "time"])
+    node_id_col = _find_col(price_df, ["node_id", "pricing node id", "pnode id", "settlement point", "node id"])
+    node_name_col = _find_col(price_df, ["node_name", "pricing node name", "pnode name", "node name", "settlement point name"])
+
+    price_nodes = pd.DataFrame()
+    if not price_df.empty and node_lat_col and node_lon_col:
+        price_df[node_lat_col] = pd.to_numeric(price_df[node_lat_col], errors="coerce")
+        price_df[node_lon_col] = pd.to_numeric(price_df[node_lon_col], errors="coerce")
+        price_nodes = price_df[
+            price_df[node_lat_col].between(-90, 90)
+            & price_df[node_lon_col].between(-180, 180)
+        ].copy()
+        if not price_nodes.empty:
+            price_nodes["_distance_miles"] = _haversine_miles(
+                site_lat, site_lon, price_nodes[node_lat_col], price_nodes[node_lon_col]
+            )
+            # One map point per node, using the closest record's location.
+            node_group_key = node_id_col or node_name_col
+            if node_group_key:
+                price_nodes = price_nodes.sort_values("_distance_miles").drop_duplicates(node_group_key)
+            else:
+                price_nodes = price_nodes.sort_values("_distance_miles").drop_duplicates([node_lat_col, node_lon_col])
+            price_nodes = price_nodes.sort_values("_distance_miles")
+
+    # Nearest market price node, only if node coordinates were supplied.
+    nearest_node = None
+    if not price_nodes.empty:
+        nearest_node = price_nodes.iloc[0]
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Candidate site", site_name.strip() or "Unnamed site")
+    k2.metric("Registered assets in radius", f"{len(nearby_assets):,}")
+    if nearest_node is not None:
+        k3.metric("Nearest pricing node", f"{nearest_node.get(node_name_col, nearest_node.get(node_id_col, 'Node'))}", f"{nearest_node['_distance_miles']:.1f} mi away")
+    else:
+        k3.metric("Pricing nodes located", "Not available")
+
+    # Build a local map from the nearby asset register and nearby transmission
+    # line geometries. This avoids sending the entire national geometry to this tab.
+    map_layers = []
+    nearby_line_records = []
+    max_degrees_lat = float(search_radius_miles) / 69.0
+    cos_lat = max(0.15, abs(__import__("math").cos(__import__("math").radians(float(site_lat)))))
+    max_degrees_lon = float(search_radius_miles) / (69.0 * cos_lat)
+
+    if "grid_lines" in globals() and isinstance(grid_lines, pd.DataFrame) and not grid_lines.empty and "path" in grid_lines.columns:
+        for _, line_row in grid_lines.iterrows():
+            path = line_row.get("path")
+            if not isinstance(path, list) or len(path) < 2:
+                continue
+            # Quick bounding-box test before adding paths to the local map.
+            lons = [pt[0] for pt in path if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+            lats = [pt[1] for pt in path if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+            if not lons or not lats:
+                continue
+            if max(lats) < site_lat - max_degrees_lat or min(lats) > site_lat + max_degrees_lat:
+                continue
+            if max(lons) < site_lon - max_degrees_lon or min(lons) > site_lon + max_degrees_lon:
+                continue
+            nearby_line_records.append({
+                "line_id": str(line_row.get("line_id", "Unknown")),
+                "path": path,
+                "owner": str(line_row.get("owner", "Unknown")),
+                "voltage_kv": line_row.get("voltage_kv", pd.NA),
+                "status": str(line_row.get("status", "Unknown")),
+            })
+
+    if nearby_line_records:
+        map_layers.append(pdk.Layer(
+            "PathLayer",
+            data=pd.DataFrame(nearby_line_records),
+            get_path="path",
+            get_color=[130, 74, 157, 180],
+            get_width=2,
+            width_min_pixels=1,
+            pickable=True,
+            auto_highlight=True,
+        ))
+
+    if not nearby_assets.empty:
+        asset_map = nearby_assets.copy()
+        asset_map["_color"] = asset_map["technology_display"].map({
+            "Solar": [217, 167, 46, 210],
+            "Wind": [65, 152, 106, 210],
+            "BESS": [57, 121, 204, 230],
+        }).apply(lambda x: x if isinstance(x, list) else [137, 129, 123, 200])
+        map_layers.append(pdk.Layer(
+            "ScatterplotLayer", data=asset_map,
+            get_position="[longitude, latitude]", get_radius=700,
+            radius_min_pixels=3, radius_max_pixels=10,
+            get_fill_color="_color", get_line_color=[255, 255, 255, 220],
+            line_width_min_pixels=1, pickable=True,
+        ))
+
+    if not price_nodes.empty:
+        node_map = price_nodes.copy()
+        node_map["_node_label"] = node_map[node_name_col].astype(str) if node_name_col else (
+            node_map[node_id_col].astype(str) if node_id_col else "Pricing node"
+        )
+        map_layers.append(pdk.Layer(
+            "ScatterplotLayer", data=node_map,
+            get_position=f"[{node_lon_col}, {node_lat_col}]",
+            get_radius=1200, radius_min_pixels=5, radius_max_pixels=12,
+            get_fill_color=[30, 120, 200, 230],
+            get_line_color=[255, 255, 255, 230],
+            line_width_min_pixels=1, pickable=True,
+        ))
+
+    map_layers.append(pdk.Layer(
+        "ScatterplotLayer", data=site_point,
+        get_position="[longitude, latitude]", get_radius=1800,
+        radius_min_pixels=8, radius_max_pixels=15,
+        get_fill_color=[232, 57, 45, 255],
+        get_line_color=[5, 7, 20, 255], line_width_min_pixels=2,
+        pickable=True,
+    ))
+
+    st.markdown("### Candidate site and nearby infrastructure")
+    st.caption(
+        f"Showing the selected site and registered assets within {search_radius_miles} miles. "
+        "Transmission lines are included where their geometry intersects the site's search area."
+    )
+    deck = pdk.Deck(
+        layers=map_layers,
+        initial_view_state=pdk.ViewState(
+            latitude=float(site_lat), longitude=float(site_lon), zoom=8, pitch=0
+        ),
+        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        tooltip={"text": "{plant_name}\n{technology_display}\n{line_id}\n{owner}\n{voltage_kv}"},
+    )
+    st.pydeck_chart(deck, height=520, use_container_width=True)
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("### Nearby renewable and storage assets")
+        if nearby_assets.empty:
+            st.info("No geolocated asset-register records were found within this radius. This does not mean the area has no projects.")
+        else:
+            display_cols = [
+                "plant_name", "technology_display", "nameplate_capacity_mw",
+                "state", "county", "entity_name", "distance_miles"
+            ]
+            display_cols = [c for c in display_cols if c in nearby_assets.columns]
+            view_assets = nearby_assets[display_cols].head(100).copy()
+            if "distance_miles" in view_assets:
+                view_assets["distance_miles"] = view_assets["distance_miles"].round(2)
+            st.dataframe(view_assets, use_container_width=True, hide_index=True, height=300)
+
+    with right:
+        st.markdown("### Nearby transmission geometry")
+        if nearby_line_records:
+            st.metric("Line paths intersecting search area", f"{len(nearby_line_records):,}")
+            st.dataframe(
+                pd.DataFrame(nearby_line_records).drop(columns=["path"], errors="ignore").head(100),
+                use_container_width=True, hide_index=True, height=300,
+            )
+            st.caption("Geometry proximity is not evidence of spare capacity or a feasible point of interconnection.")
+        else:
+            st.info("No transmission-line geometry was available in this search area. Check that the Transmission Grid dataset loaded.")
+
+    st.markdown("### Nearest market pricing node")
+    if price_df.empty:
+        st.warning(
+            "No nodal price CSV was found. Phase 1 site exploration is available, but node pricing and LMP charts require a geolocated historical price dataset."
+        )
+        st.markdown(
+            "**Expected repository CSV:** `nodal_lmp_prices.csv` in the repository root or `data/` folder. "
+            "Include node name/ID, latitude, longitude, timestamp and an LMP/price column."
+        )
+        if price_load_error:
+            st.caption(f"Price-file read error: {price_load_error}")
+    elif not node_lat_col or not node_lon_col or not price_value_col:
+        st.warning(
+            f"Found `{price_file_used.name}`, but it needs node coordinates and an LMP/price column to plot prices. "
+            "Supported fields include latitude, longitude, timestamp and LMP_USD_MWh."
+        )
+        st.dataframe(price_df.head(10), use_container_width=True, hide_index=True)
+    elif nearest_node is None:
+        st.warning("The price file has no valid geolocated pricing nodes near the candidate site.")
+    else:
+        nearest_label = str(nearest_node.get(node_name_col, nearest_node.get(node_id_col, "Pricing node")))
+        st.write(f"**Nearest node:** {nearest_label} · **Distance:** {nearest_node['_distance_miles']:.2f} miles")
+        if timestamp_col:
+            price_df[timestamp_col] = pd.to_datetime(price_df[timestamp_col], errors="coerce", utc=True)
+        price_df[price_value_col] = pd.to_numeric(price_df[price_value_col], errors="coerce")
+        if node_id_col and node_id_col in nearest_node.index:
+            selected_node_mask = price_df[node_id_col].astype(str) == str(nearest_node[node_id_col])
+        elif node_name_col and node_name_col in nearest_node.index:
+            selected_node_mask = price_df[node_name_col].astype(str) == str(nearest_node[node_name_col])
+        else:
+            selected_node_mask = (
+                (pd.to_numeric(price_df[node_lat_col], errors="coerce") - float(nearest_node[node_lat_col])).abs() < 1e-6
+            ) & (
+                (pd.to_numeric(price_df[node_lon_col], errors="coerce") - float(nearest_node[node_lon_col])).abs() < 1e-6
+            )
+        node_history = price_df[selected_node_mask].copy()
+        node_history = node_history.dropna(subset=[price_value_col])
+        if not node_history.empty:
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Mean LMP", f"${node_history[price_value_col].mean():,.2f}/MWh")
+            p2.metric("Median LMP", f"${node_history[price_value_col].median():,.2f}/MWh")
+            p3.metric("Negative-price intervals", f"{(node_history[price_value_col] < 0).mean() * 100:.1f}%")
+            p4.metric("Price observations", f"{len(node_history):,}")
+            if timestamp_col and node_history[timestamp_col].notna().any():
+                node_history = node_history.sort_values(timestamp_col)
+                price_fig = px.line(
+                    node_history, x=timestamp_col, y=price_value_col,
+                    title=f"Historical nodal prices · {nearest_label}",
+                    labels={timestamp_col: "Timestamp", price_value_col: "LMP ($/MWh)"},
+                )
+                st.plotly_chart(style_chart(price_fig), use_container_width=True)
+            else:
+                st.info("Price history is available, but no parseable timestamp column was detected for a time-series chart.")
+        else:
+            st.warning("The nearest node is located, but no price records matched its node ID/name.")
+
+    st.markdown("### Phase 1 scope and data limitations")
+    st.info(
+        "This first phase supports candidate-coordinate screening, nearby asset discovery, transmission geometry proximity, "
+        "and optional historical nodal-price visualization. It does not yet calculate 2h/4h battery arbitrage, "
+        "confirm interconnection capacity, identify binding contingency constraints, or replace a formal interconnection study."
+    )
 
 
 # ============================================================
