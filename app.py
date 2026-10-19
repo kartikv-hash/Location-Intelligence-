@@ -1562,7 +1562,7 @@ def transmission_legend_html(color_map):
 st.markdown("""
 <div class="topbar">
     <div class="brand">
-        Sunstripe <span class="accent">Location Intelligence</span>
+        Sunstripe <span class="accent">SELECT</span>
     </div>
     <div class="brand-tagline">
         KNOW WHERE TO BUILD
