@@ -1562,10 +1562,10 @@ def transmission_legend_html(color_map):
 st.markdown("""
 <div class="topbar">
     <div class="brand">
-        Sunstripe <span class="accent">Location Intelligence</span>
+        Sunstripe <span class="accent">SELECT</span>
     </div>
     <div class="brand-tagline">
-        Intelligence Platform for Energy Infrastructure
+        KNOW WHERE TO BUILD
     </div>
     <div class="navrow">
         <span class="navitem active">ASSETS</span>
@@ -1579,9 +1579,7 @@ st.markdown("""
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
 <div class="subtitle">
-Explore US renewable energy projects. Choose Solar, Wind or BESS to filter
-the entire workspace, inspect available project information and export
-individual project records.
+Location and Site Intelligence for Renewable Energy and Large Loads.
 </div>
 """, unsafe_allow_html=True)
 
