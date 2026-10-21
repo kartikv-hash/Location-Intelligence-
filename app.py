@@ -20,7 +20,7 @@ import streamlit as st
 # ============================================================
 
 st.set_page_config(
-    page_title="Sunstripe SELECT",
+    page_title="Sunstripe Location Intelligence",
     page_icon="S",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1562,10 +1562,10 @@ def transmission_legend_html(color_map):
 st.markdown("""
 <div class="topbar">
     <div class="brand">
-        Sunstripe <span class="accent">SELECT</span>
+        Sunstripe <span class="accent">Location Intelligence</span>
     </div>
     <div class="brand-tagline">
-        KNOW WHERE TO BUILD
+        Intelligence Platform for Energy Infrastructure
     </div>
     <div class="navrow">
         <span class="navitem active">ASSETS</span>
@@ -1579,7 +1579,9 @@ st.markdown("""
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
 <div class="subtitle">
-Location and Site Intelligence for Renewable Energy and Large Loads.
+Explore US renewable energy projects. Choose Solar, Wind or BESS to filter
+the entire workspace, inspect available project information and export
+individual project records.
 </div>
 """, unsafe_allow_html=True)
 
@@ -1965,9 +1967,10 @@ def style_chart(fig):
 # LOCATION EXPLORER: SEPARATE RENEWABLE AND TRANSMISSION MAPS
 # ============================================================
 
-tab_asset_map, tab_transmission_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
+tab_asset_map, tab_transmission_map, tab_hifld_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
     "Renewable asset map",
     "Transmission network",
+    "HIFLD transmission map",
     "Project register",
     "Project details",
     "Technology analytics",
@@ -2227,6 +2230,40 @@ with tab_transmission_map:
     st.caption(
         "Grid line coverage depends on features present in the loaded files. Map colours represent "
         "reported nominal voltage, not live congestion or available transfer capacity."
+    )
+
+
+# ============================================================
+# HIFLD ARCGIS TRANSMISSION MAP (NATIVE INTERACTIVE MAP VIEWER)
+# Kept separate from the repository CSV/KMZ map. The ArcGIS Map Viewer
+# retains its own basemap, layer styling, controls, and feature pop-ups.
+# ============================================================
+
+with tab_hifld_map:
+    st.markdown("### HIFLD U.S. electric power transmission lines")
+    st.caption(
+        "Official ArcGIS Map Viewer supplied by HIFLD. Use the map's native zoom, "
+        "pan, layer controls, and click transmission features to inspect the "
+        "attributes configured by the source map. This map is independent of "
+        "your repository CSV/KMZ transmission map."
+    )
+
+    hifld_map_url = (
+        "https://www.arcgis.com/apps/mapviewer/index.html"
+        "?layers=d77284d1a97a426eaf960bab4764999c"
+    )
+    st.components.v1.iframe(
+        src=hifld_map_url,
+        height=820,
+        scrolling=True,
+    )
+    st.markdown(
+        f"[Open the HIFLD transmission map directly in ArcGIS]({hifld_map_url})"
+    )
+    st.caption(
+        "Source: ArcGIS Map Viewer / HIFLD. Feature details and pop-ups are "
+        "provided by the original ArcGIS map. If your browser or organization "
+        "blocks embedded ArcGIS content, open it using the link above."
     )
 
 
