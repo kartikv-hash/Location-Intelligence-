@@ -1967,10 +1967,10 @@ def style_chart(fig):
 # LOCATION EXPLORER: SEPARATE RENEWABLE AND TRANSMISSION MAPS
 # ============================================================
 
-tab_asset_map, tab_transmission_map, tab_hifld_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
+tab_asset_map, tab_transmission_map, tab_interactive_grid_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
     "Renewable asset map",
     "Transmission network",
-    "HIFLD transmission map",
+    "Interactive grid map",
     "Project register",
     "Project details",
     "Technology analytics",
@@ -2234,36 +2234,44 @@ with tab_transmission_map:
 
 
 # ============================================================
-# HIFLD ARCGIS TRANSMISSION MAP (NATIVE INTERACTIVE MAP VIEWER)
-# Kept separate from the repository CSV/KMZ map. The ArcGIS Map Viewer
-# retains its own basemap, layer styling, controls, and feature pop-ups.
+# INTERACTIVE TRANSMISSION MAP
+# Native ArcGIS Map Viewer embed; its original map styling and feature pop-ups
+# are preserved while the surrounding page follows the Sunstripe interface.
 # ============================================================
 
-with tab_hifld_map:
-    st.markdown("### HIFLD U.S. electric power transmission lines")
-    st.caption(
-        "Official ArcGIS Map Viewer supplied by HIFLD. Use the map's native zoom, "
-        "pan, layer controls, and click transmission features to inspect the "
-        "attributes configured by the source map. This map is independent of "
-        "your repository CSV/KMZ transmission map."
+with tab_interactive_grid_map:
+    st.markdown(
+        '<div class="section-title">Interactive transmission intelligence</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "Explore the transmission network across the United States. Pan and zoom, "
+        "use the map controls, and select a line to view the attributes available "
+        "for that feature."
     )
 
-    hifld_map_url = (
+    interactive_grid_map_url = (
         "https://www.arcgis.com/apps/mapviewer/index.html"
         "?layers=d77284d1a97a426eaf960bab4764999c"
     )
+    st.markdown(
+        "<div style='border:1px solid #E7E0DB;border-radius:10px;overflow:hidden;"
+        "background:#FFFDFA;padding:6px;'>",
+        unsafe_allow_html=True,
+    )
     st.components.v1.iframe(
-        src=hifld_map_url,
+        src=interactive_grid_map_url,
         height=820,
         scrolling=True,
     )
+    st.markdown("</div>", unsafe_allow_html=True)
     st.markdown(
-        f"[Open the HIFLD transmission map directly in ArcGIS]({hifld_map_url})"
+        f"[Open interactive map in a new tab]({interactive_grid_map_url})"
     )
     st.caption(
-        "Source: ArcGIS Map Viewer / HIFLD. Feature details and pop-ups are "
-        "provided by the original ArcGIS map. If your browser or organization "
-        "blocks embedded ArcGIS content, open it using the link above."
+        "Feature information and pop-ups depend on the attributes made available "
+        "by the map layer. If the map is blocked by browser or organization policy, "
+        "open it in a new tab."
     )
 
 
