@@ -1585,7 +1585,7 @@ st.markdown("""
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
 <div class="subtitle">
-Locationa dn Site Intelligence for Renewable Energy and Large Loads
+Location and Site Intelligence for Renewable Energy and Large Loads
 </div>
 """, unsafe_allow_html=True)
 
