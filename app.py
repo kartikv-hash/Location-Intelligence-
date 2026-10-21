@@ -1967,10 +1967,9 @@ def style_chart(fig):
 # LOCATION EXPLORER: SEPARATE RENEWABLE AND TRANSMISSION MAPS
 # ============================================================
 
-tab_asset_map, tab_transmission_map, tab_interactive_grid_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
+tab_asset_map, tab_transmission_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
     "Renewable asset map",
     "Transmission network",
-    "Interactive grid map",
     "Project register",
     "Project details",
     "Technology analytics",
@@ -2107,147 +2106,13 @@ with tab_asset_map:
 # ============================================================
 
 with tab_transmission_map:
-    st.markdown("### Full transmission network")
-    st.caption(
-        "This is a separate interactive map for the transmission grid. It is not filtered by "
-        "the Solar/Wind/BESS selection and fits the view to the full extent of the loaded grid data."
-    )
-
-    line_traces, line_color_map = transmission_line_traces(transmission_groups)
-
-    grid_lats = []
-    grid_lons = []
-    for grouped_segments in transmission_groups.values():
-        for segment_lons, segment_lats in grouped_segments:
-            for lon, lat in zip(segment_lons, segment_lats):
-                if lon is not None and lat is not None and pd.notna(lon) and pd.notna(lat):
-                    try:
-                        grid_lons.append(float(lon))
-                        grid_lats.append(float(lat))
-                    except (TypeError, ValueError):
-                        pass
-    if not grid_points.empty:
-        grid_lats.extend(pd.to_numeric(grid_points["latitude"], errors="coerce").dropna().tolist())
-        grid_lons.extend(pd.to_numeric(grid_points["longitude"], errors="coerce").dropna().tolist())
-
-    # Always build and display the map canvas. If no features loaded, show a US
-    # basemap with a transparent anchor rather than omitting the map entirely.
-    grid_center, grid_zoom = fit_map_view(
-        grid_lats, grid_lons, height=720, zoom_padding=0.6,
-    )
-    fig_grid = go.Figure()
-    if not line_traces and grid_points.empty:
-        fig_grid.add_trace(
-            MAP_TRACE_CLASS(
-                lon=[-98.0], lat=[39.0], mode="markers",
-                marker=dict(size=1, opacity=0),
-                name="No grid data loaded", showlegend=False,
-                hoverinfo="skip",
-            )
-        )
-
-    # Each voltage class has its own interactive line trace and legend item.
-    for trace in line_traces:
-        fig_grid.add_trace(trace)
-
-    if not grid_points.empty:
-        grid_hover = grid_points["name"].fillna("Grid / substation").astype(str)
-        fig_grid.add_trace(
-            MAP_TRACE_CLASS(
-                lon=grid_points["longitude"],
-                lat=grid_points["latitude"],
-                mode="markers",
-                marker=dict(size=8, color=NAVY, opacity=1, symbol="square"),
-                name="Grid / substation",
-                legendgroup="grid-points",
-                showlegend=True,
-                text=grid_hover,
-                customdata=grid_points[["voltage_label", "source_file"]].astype(str).to_numpy(),
-                hovertemplate=(
-                    "<b>%{text}</b><br>Grid feature<br>Voltage: %{customdata[0]}"
-                    "<br>Source: %{customdata[1]}<extra></extra>"
-                ),
-            )
-        )
-
-    fig_grid.update_layout(
-        **{MAP_LAYOUT_KEY: dict(
-            style="open-street-map", center=grid_center, zoom=grid_zoom,
-        )},
-        height=720,
-        font=dict(family=FONT, size=13, color=BLACK),
-        paper_bgcolor=BG,
-        margin=dict(t=10, b=10, l=10, r=10),
-        legend=dict(
-            title=dict(text="Transmission voltage"),
-            font=dict(family=FONT, size=12, color=BLACK),
-            bgcolor="rgba(251,249,247,0.94)",
-            x=0.015, y=0.985, xanchor="left", yanchor="top",
-        ),
-    )
-    st.plotly_chart(fig_grid, use_container_width=True, key="full_transmission_network_map")
-
-    if line_color_map:
-        st.markdown(transmission_legend_html(line_color_map), unsafe_allow_html=True)
-
-    if transmission_source_names:
-        st.success(
-            f"Grid data loaded from {len(transmission_source_names)} file(s): "
-            + ", ".join(transmission_source_names)
-            + f". Transmission line segments: {transmission_segment_count:,}; "
-            + f"grid point features: {len(grid_points):,}."
-        )
-
-    if not line_traces and grid_points.empty:
-        st.warning(
-            "The map canvas is showing, but no transmission lines or grid points were loaded. "
-            "Check the detected repository files in the sidebar or upload CSV/KMZ/KML/GeoJSON there."
-        )
-        if transmission_load_errors:
-            with st.expander("Grid file loading errors", expanded=True):
-                for message in transmission_load_errors:
-                    st.error(message)
-    elif transmission_groups:
-        if set(transmission_groups.keys()) == {"Unknown kV"}:
-            st.warning(
-                "Transmission lines were loaded, but recognizable voltage values were not found. "
-                "Those lines are shown in grey. Check the CSV voltage/kV column or KML/KMZ placemark descriptions."
-            )
-        voltage_summary = pd.DataFrame([
-            {
-                "Voltage": voltage_label,
-                "Line segments": len(segments),
-                "Map color": line_color_map.get(voltage_label, UNKNOWN_VOLTAGE_COLOR),
-            }
-            for voltage_label, segments in sorted(
-                transmission_groups.items(),
-                key=lambda item: (voltage_value_from_label(item[0]), item[0]),
-            )
-        ])
-        with st.expander("Transmission voltage layers loaded", expanded=False):
-            st.dataframe(voltage_summary, hide_index=True, use_container_width=True)
-
-    st.caption(
-        "Grid line coverage depends on features present in the loaded files. Map colours represent "
-        "reported nominal voltage, not live congestion or available transfer capacity."
-    )
-
-
-# ============================================================
-# INTERACTIVE TRANSMISSION MAP
-# Native ArcGIS Map Viewer embed; its original map styling and feature pop-ups
-# are preserved while the surrounding page follows the Sunstripe interface.
-# ============================================================
-
-with tab_interactive_grid_map:
     st.markdown(
-        '<div class="section-title">Interactive transmission intelligence</div>',
+        '<div class="section-title">Transmission network</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        "Explore the transmission network across the United States. Pan and zoom, "
-        "use the map controls, and select a line to view the attributes available "
-        "for that feature."
+        "Explore the U.S. transmission grid using the interactive map. Pan and zoom, "
+        "use the map controls, and select a transmission line to view its available attributes."
     )
 
     interactive_grid_map_url = (
@@ -2269,11 +2134,9 @@ with tab_interactive_grid_map:
         f"[Open interactive map in a new tab]({interactive_grid_map_url})"
     )
     st.caption(
-        "Feature information and pop-ups depend on the attributes made available "
-        "by the map layer. If the map is blocked by browser or organization policy, "
-        "open it in a new tab."
+        "Feature information and pop-ups depend on the attributes available in the map layer. "
+        "If the map is blocked by browser or organization policy, open it in a new tab."
     )
-
 
 # ============================================================
 # PROJECT REGISTER / DETAILS / ANALYTICS / DATA SOURCES
