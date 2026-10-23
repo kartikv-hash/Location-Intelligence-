@@ -1574,12 +1574,12 @@ st.markdown("""
         Know Where To Build
     </div>
     <div class="navrow">
-        <span class="navitem active">ASSETS</span>
-        <span class="navitem">GRID</span>
-        <span class="navitem">SCREENING</span>
-        <span class="navitem">MARKETS</span>
-        <span class="navitem">RESEARCH</span>
-        <span class="navitem">ABOUT</span>
+        <span class="navitem active">SITE INTELLIGENCE</span>
+        <span class="navitem">INTERCONNECTION</span>
+        <span class="navitem">GRID &amp; NODAL</span>
+        <span class="navitem">NEIGHBORHOOD</span>
+        <span class="navitem">ALTERNATIVES</span>
+        <span class="navitem">LAND &amp; REAL ESTATE</span>
     </div>
 </div>
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
@@ -2273,8 +2273,8 @@ def idx_chart(data, title, cs):
     df = pd.DataFrame({"Cat":list(data.keys()),"Score":list(data.values())}).sort_values("Score",ascending=True)
     fig = px.bar(df,x="Score",y="Cat",orientation="h",color="Score",color_continuous_scale=cs,range_color=[0,100])
     fig.update_layout(height=max(260,len(data)*28),showlegend=False,margin=dict(l=10,r=10,t=30,b=10),
-        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color="#e2e8f0",size=11),
-        xaxis=dict(range=[0,100],gridcolor="#334155"),yaxis=dict(gridcolor="#334155"),coloraxis_showscale=False,title=title)
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color=BLACK,size=11),
+        xaxis=dict(range=[0,100],gridcolor=LINE),yaxis=dict(gridcolor=LINE),coloraxis_showscale=False,title=title)
     return fig
 
 
@@ -2396,7 +2396,7 @@ def render_siteiq():
     st.markdown(f"""<div style='display:flex;align-items:center;gap:24px;margin:16px 0'>
         <div style='font-size:3.5rem;font-weight:900;color:{color}'>{score}</div>
         <div><div style='font-size:1.3rem;font-weight:700'>{county}, {state}</div>
-        <div style='color:#94a3b8'>{lat:.4f}, {lon:.4f} | {acres:,} acres | {d['buildable_acres']:,.0f} buildable | {d['wholesale_market']} Market</div></div>
+        <div style='color:#111827'>{lat:.4f}, {lon:.4f} | {acres:,} acres | {d['buildable_acres']:,.0f} buildable | {d['wholesale_market']} Market</div></div>
     </div>""", unsafe_allow_html=True)
 
     tab_summary, tab_env, tab_infra, tab_market, tab_export = st.tabs([
@@ -2433,7 +2433,7 @@ def render_siteiq():
         st.markdown("### Score Breakdown")
         cats = list(bd.keys()); vals = list(bd.values())
         fig_r = go.Figure(go.Scatterpolar(r=vals+[vals[0]],theta=cats+[cats[0]],fill="toself",fillcolor="rgba(99,102,241,0.2)",line=dict(color="#6366f1",width=2)))
-        fig_r.update_layout(polar=dict(bgcolor="rgba(0,0,0,0)",radialaxis=dict(visible=True,range=[0,100])),showlegend=False,height=350,margin=dict(l=60,r=60,t=30,b=30),paper_bgcolor="rgba(0,0,0,0)",font=dict(color="#e2e8f0"))
+        fig_r.update_layout(polar=dict(bgcolor="rgba(0,0,0,0)",radialaxis=dict(visible=True,range=[0,100])),showlegend=False,height=350,margin=dict(l=60,r=60,t=30,b=30),paper_bgcolor="rgba(0,0,0,0)",font=dict(color=BLACK))
         st.plotly_chart(fig_r,use_container_width=True)
 
     # ━━━ ENVIRONMENTAL ━━━
@@ -2448,11 +2448,11 @@ def render_siteiq():
         s1,s2 = st.columns(2)
         with s1:
             fig = px.bar(soil_df,x="Type",y="Suitability",color="Suitability",color_continuous_scale=["#ef4444","#f59e0b","#22c55e"],range_color=[0,100],title="Soil Suitability")
-            fig.update_layout(height=280,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color="#e2e8f0"),coloraxis_showscale=False)
+            fig.update_layout(height=280,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color=BLACK),coloraxis_showscale=False)
             st.plotly_chart(fig,use_container_width=True)
         with s2:
             fig2 = px.bar(soil_df,x="Type",y="Bedrock (ft)",title="Bedrock Depth",color="Bedrock (ft)",color_continuous_scale=["#fbbf24","#22c55e"])
-            fig2.update_layout(height=280,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color="#e2e8f0"),coloraxis_showscale=False)
+            fig2.update_layout(height=280,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color=BLACK),coloraxis_showscale=False)
             st.plotly_chart(fig2,use_container_width=True)
 
         st.markdown("### Protected Species")
@@ -2472,7 +2472,7 @@ def render_siteiq():
         st.markdown("### Land Cover")
         lc_df = pd.DataFrame(d["land_cover"])
         fig_lc = px.pie(lc_df,values="acres",names="type",hole=0.4,color_discrete_sequence=px.colors.qualitative.Set3)
-        fig_lc.update_layout(height=320,paper_bgcolor="rgba(0,0,0,0)",font=dict(color="#e2e8f0"))
+        fig_lc.update_layout(height=320,paper_bgcolor="rgba(0,0,0,0)",font=dict(color=BLACK))
         st.plotly_chart(fig_lc,use_container_width=True)
 
         st.markdown("### Topography")
@@ -2512,7 +2512,7 @@ def render_siteiq():
         lmp = generate_lmp_history(base)
         fig_l = px.area(lmp,x="Date",y="LMP ($/MWh)",title="12-Month LMP History")
         fig_l.update_traces(fillcolor="rgba(99,102,241,0.2)",line_color="#6366f1")
-        fig_l.update_layout(height=320,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color="#e2e8f0"),xaxis=dict(gridcolor="#334155"),yaxis=dict(gridcolor="#334155"))
+        fig_l.update_layout(height=320,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font=dict(color=BLACK),xaxis=dict(gridcolor=LINE),yaxis=dict(gridcolor=LINE))
         st.plotly_chart(fig_l,use_container_width=True)
 
         mc1,mc2,mc3,mc4 = st.columns(4)
@@ -2556,14 +2556,19 @@ def render_siteiq():
 # LOCATION EXPLORER: SEPARATE RENEWABLE AND TRANSMISSION MAPS
 # ============================================================
 
-tab_siteiq, tab_asset_map, tab_transmission_map, tab_register, tab_details, tab_analytics, tab_method = st.tabs([
+# Main workspace tabs follow the SIGNAL flow as closely as the existing
+# feature set permits. SiteIQ includes the site/community screening tools;
+# Transmission network covers interconnection/grid visibility; asset and
+# project views support alternatives/competitor review. AcreValue is last.
+tab_siteiq, tab_transmission_map, tab_asset_map, tab_register, tab_details, tab_analytics, tab_method, tab_acrevalue = st.tabs([
     "SiteIQ",
-    "Renewable assets",
     "Transmission network",
+    "Renewable assets",
     "Project register",
     "Project details",
     "Technology analytics",
     "Data & limitations",
+    "Land & Real Estate (AcreValue)",
 ])
 
 with tab_siteiq:
@@ -3174,6 +3179,33 @@ Some records may not have coordinates or reported storage energy capacity.
         use_container_width=True,
         hide_index=True,
     )
+
+
+# ============================================================
+# LAND & REAL ESTATE — ACREVALUE (FINAL SIGNAL TAB)
+# Embeds the provider's own interactive map; no parcel data is scraped
+# or copied into Sunstripe Select.
+# ============================================================
+
+with tab_acrevalue:
+    acrevalue_url = "https://www.acrevalue.com/map/?lat=40.8&lng=-90.5&zoom=4"
+    st.markdown(
+        '<div class="section-title">Land & Real Estate · AcreValue</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "Explore AcreValue’s interactive U.S. map for parcel and property details "
+        "made available by AcreValue, such as parcel boundaries, land listings, "
+        "and valuation-related information where supported by your account."
+    )
+    st.link_button("Open AcreValue directly ↗", acrevalue_url)
+    st.caption(
+        "The map is provided by AcreValue. Its embedding settings may prevent it "
+        "from displaying inside another website; if the panel is blank or limited, "
+        "use the direct link above. Some property information may require an "
+        "AcreValue account or subscription."
+    )
+    st.components.v1.iframe(acrevalue_url, height=720, scrolling=True)
 
 
 # ============================================================
