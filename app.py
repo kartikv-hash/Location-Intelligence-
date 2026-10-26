@@ -3190,22 +3190,23 @@ Some records may not have coordinates or reported storage energy capacity.
 
 
 def _land_data_api_key():
-    """Read the Parceled API key from Streamlit secrets or environment variables.
+    """Read the current Parceled key, preferring Streamlit deployment secrets.
 
-    PARCELED_API_KEY is the preferred name. PARCEL_DATA_API_KEY remains
-    supported for backward compatibility with existing deployments.
+    PARCELED_API_KEY is preferred; PARCEL_DATA_API_KEY remains supported.
+    Secrets take priority over environment variables so a stale environment key
+    cannot override the key configured for the deployed app.
     """
-    for name in ("PARCELED_API_KEY", "PARCEL_DATA_API_KEY"):
-        key = os.getenv(name, "").strip()
-        if key:
-            return key
     try:
         for name in ("PARCELED_API_KEY", "PARCEL_DATA_API_KEY"):
-            key = str(st.secrets.get(name, "")).strip()
+            key = str(st.secrets.get(name, "")).strip().strip("\"'")
             if key:
                 return key
     except Exception:
         pass
+    for name in ("PARCELED_API_KEY", "PARCEL_DATA_API_KEY"):
+        key = os.getenv(name, "").strip().strip("\"'")
+        if key:
+            return key
     return ""
 
 
