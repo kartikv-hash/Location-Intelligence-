@@ -1593,6 +1593,121 @@ Location and Site Intelligence for Renewable Energy and Large Loads
 
 
 # ============================================================
+# SUNSTRIPE AI — REAL-TIME RESEARCH CHATBOX
+# Uses OpenAI Responses API + live web search.
+# Configure OPENAI_API_KEY in Streamlit Secrets.
+# ============================================================
+
+def _sunstripe_ai_answer(chat_messages):
+    """Answer using OpenAI Responses API with live web search and source citations."""
+    api_key = ""
+    model = "gpt-5.5"
+    try:
+        api_key = str(st.secrets.get("OPENAI_API_KEY", "")).strip().strip("\"'")
+        model = str(st.secrets.get("OPENAI_MODEL", model)).strip() or model
+    except Exception:
+        pass
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY", "").strip().strip("\"'")
+    if not model:
+        model = os.getenv("OPENAI_MODEL", "gpt-5.5").strip() or "gpt-5.5"
+    if not api_key:
+        raise RuntimeError(
+            "AI chat is not configured yet. Add OPENAI_API_KEY to Streamlit Cloud → Settings → Secrets, then reboot the app."
+        )
+
+    instructions = """You are Sunstripe SELECT AI, an analyst copilot for utility-scale solar, wind, battery energy storage systems (BESS), large loads and US power markets. Help users with site screening, land, permitting, transmission, interconnection, nodal/LMP analysis, project competitors, and market/regulatory research. Use live web search for questions involving current or real-time facts, regulations, prices, project status, or recent news. Prefer primary sources such as ISO/RTOs, FERC, NERC, EIA, DOE, state agencies and official project filings. Clearly distinguish sourced facts from estimates and assumptions. Never invent live prices, grid capacity, parcel facts, or project status. State the date/time context when relevant and include clickable citations from web search. Keep answers practical, structured and concise; ask one focused follow-up only when essential. The app's local charts or sample datasets are not live market data unless explicitly connected to a live source."""
+    input_items = [{"role": "developer", "content": instructions}]
+    for item in chat_messages[-12:]:
+        role = item.get("role", "user")
+        if role not in ("user", "assistant"):
+            continue
+        input_items.append({"role": role, "content": item.get("content", "")})
+
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "input": input_items,
+            "tools": [{"type": "web_search", "search_context_size": "medium"}],
+            "tool_choice": "auto",
+        },
+        timeout=120,
+    )
+    if response.status_code >= 400:
+        try:
+            detail = response.json().get("error", {}).get("message", response.text[:500])
+        except ValueError:
+            detail = response.text[:500]
+        raise RuntimeError(f"OpenAI API error ({response.status_code}): {detail}")
+    payload = response.json()
+    answer_parts, sources = [], []
+    for output_item in payload.get("output", []):
+        if output_item.get("type") != "message":
+            continue
+        for content_item in output_item.get("content", []):
+            if content_item.get("type") == "output_text":
+                text_part = content_item.get("text", "")
+                if text_part:
+                    answer_parts.append(text_part)
+                for annotation in content_item.get("annotations", []):
+                    if annotation.get("type") == "url_citation":
+                        citation = annotation.get("url_citation", annotation)
+                        url = citation.get("url")
+                        title = citation.get("title") or url
+                        if url and not any(source.get("url") == url for source in sources):
+                            sources.append({"title": title, "url": url})
+    answer = "\n\n".join(answer_parts).strip()
+    if not answer:
+        raise RuntimeError("The AI service returned no text. Please try again.")
+    return answer, sources
+
+
+st.markdown(
+    '<div style="background:#F4F2EF;border:1px solid #E7E0DB;border-top:3px solid #E8392D;padding:18px 20px 8px;margin:0 0 24px 0;">'
+    '<div style="font-size:11px;font-weight:700;letter-spacing:1.4px;color:#E8392D;">SUNSTRIPE AI</div>'
+    '<div style="font-size:23px;font-weight:700;color:#050714;margin:4px 0 5px;">Your renewable energy intelligence copilot</div>'
+    '<div style="font-size:13px;color:#333;">Ask about sites, land, grid access, BESS economics, ERCOT and other power markets. Web research is enabled for current information.</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+if "sunstripe_ai_messages" not in st.session_state:
+    st.session_state.sunstripe_ai_messages = [
+        {"role": "assistant", "content": "Hi! I’m Sunstripe AI. Ask me to evaluate a site, explain an interconnection issue, research a market, or compare solar, wind and BESS opportunities.", "sources": []}
+    ]
+
+with st.container(border=True):
+    for _msg in st.session_state.sunstripe_ai_messages:
+        with st.chat_message(_msg["role"]):
+            st.markdown(_msg["content"])
+            if _msg.get("sources"):
+                with st.expander(f"Sources ({len(_msg['sources'])})"):
+                    for _source in _msg["sources"]:
+                        st.markdown(f"- [{_source['title']}]({_source['url']})")
+    _ai_prompt = st.chat_input("Ask Sunstripe AI about a site, market, grid node or BESS opportunity…", key="sunstripe_ai_prompt")
+    if _ai_prompt:
+        st.session_state.sunstripe_ai_messages.append({"role": "user", "content": _ai_prompt, "sources": []})
+        with st.chat_message("user"):
+            st.markdown(_ai_prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Researching and preparing an answer…"):
+                try:
+                    _ai_answer, _ai_sources = _sunstripe_ai_answer(st.session_state.sunstripe_ai_messages)
+                    st.markdown(_ai_answer)
+                    if _ai_sources:
+                        with st.expander(f"Sources ({len(_ai_sources)})"):
+                            for _source in _ai_sources:
+                                st.markdown(f"- [{_source['title']}]({_source['url']})")
+                    st.session_state.sunstripe_ai_messages.append({"role": "assistant", "content": _ai_answer, "sources": _ai_sources})
+                except Exception as _ai_error:
+                    st.error(str(_ai_error))
+                    st.session_state.sunstripe_ai_messages.append({"role": "assistant", "content": f"I couldn’t complete that request: {_ai_error}", "sources": []})
+        st.rerun()
+
+
+# ============================================================
 # DATA SOURCE SELECTOR
 # REPOSITORY CSV IS THE DEFAULT
 # ============================================================
