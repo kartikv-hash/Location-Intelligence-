@@ -3190,14 +3190,23 @@ Some records may not have coordinates or reported storage energy capacity.
 
 
 def _land_data_api_key():
-    """Read a parcel-data key from Streamlit secrets or the environment."""
-    key = os.getenv("PARCEL_DATA_API_KEY", "").strip()
-    if key:
-        return key
+    """Read the Parceled API key from Streamlit secrets or environment variables.
+
+    PARCELED_API_KEY is the preferred name. PARCEL_DATA_API_KEY remains
+    supported for backward compatibility with existing deployments.
+    """
+    for name in ("PARCELED_API_KEY", "PARCEL_DATA_API_KEY"):
+        key = os.getenv(name, "").strip()
+        if key:
+            return key
     try:
-        return str(st.secrets.get("PARCEL_DATA_API_KEY", "")).strip()
+        for name in ("PARCELED_API_KEY", "PARCEL_DATA_API_KEY"):
+            key = str(st.secrets.get(name, "")).strip()
+            if key:
+                return key
     except Exception:
-        return ""
+        pass
+    return ""
 
 
 def _land_geocode_address(query):
@@ -3259,124 +3268,78 @@ def _parse_mcp_json(response):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _lookup_land_parcel(lat, lon, api_key):
-    """Retrieve assessor-sourced parcel information for a selected coordinate."""
-    endpoint = "https://parceled.ai/api/mcp"
-    base_headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
+    """Check dataset coverage, then fetch parcel data through Parceled REST API.
+
+    Availability checks are free and require no key. The parcel request only
+    asks for the parcel field to avoid opting into additional billable datasets.
+    """
+    base_url = "https://parceled.ai/api/v1"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Accept": "application/json",
+        "User-Agent": "SunstripeSelect/1.0",
     }
 
     try:
-        with requests.Session() as client:
-            # Start a standard Streamable HTTP session. The service may be
-            # stateless; in that case the same calls still work without a session ID.
-            init_payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": {"name": "Sunstripe Select", "version": "1.0.0"},
-                },
+        # First check coverage before making a billable parcel-data request.
+        availability_response = requests.get(
+            f"{base_url}/check-availability",
+            params={"lat": float(lat), "lng": float(lon)},
+            headers={"Accept": "application/json", "User-Agent": "SunstripeSelect/1.0"},
+            timeout=20,
+        )
+        availability_response.raise_for_status()
+        availability_payload = availability_response.json()
+        availability = availability_payload.get("data", availability_payload)
+
+        if not availability.get("parcel", False):
+            return {
+                "data": {"parcel": None},
+                "availability": availability,
+                "message": "Parceled reports no parcel dataset at this coordinate. Try a point inside the parcel or another location.",
             }
-            init_response = client.post(
-                endpoint,
-                headers=base_headers,
-                json=init_payload,
-                timeout=20,
-            )
-            if init_response.status_code in (401, 403):
-                raise RuntimeError("The parcel-data access key was rejected. Check the key and try again.")
-            init_response.raise_for_status()
-            init_data = _parse_mcp_json(init_response)
 
-            session_id = init_response.headers.get("Mcp-Session-Id") or init_response.headers.get("mcp-session-id")
-            negotiated_version = (
-                init_data.get("result", {}).get("protocolVersion")
-                if isinstance(init_data, dict) else None
-            ) or "2025-11-25"
-            call_headers = dict(base_headers)
-            call_headers["MCP-Protocol-Version"] = negotiated_version
-            if session_id:
-                call_headers["Mcp-Session-Id"] = session_id
-
-            # Protocol notification: initialization has completed.
-            client.post(
-                endpoint,
-                headers=call_headers,
-                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                timeout=15,
+        response = requests.get(
+            f"{base_url}/parcels",
+            params={"lat": float(lat), "lng": float(lon), "include": "parcel"},
+            headers=headers,
+            timeout=25,
+        )
+        if response.status_code in (401, 403):
+            raise RuntimeError(
+                "Parceled rejected the API key (HTTP 401/403). In Streamlit Secrets, set "
+                "PARCELED_API_KEY to the key returned by Parceled's createParceledAccount "
+                "mutation, without extra spaces. Do not use an Apollo GraphOS key."
             )
-
-            lookup_payload = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "search_parcels",
-                    "arguments": {
-                        "lat": float(lat),
-                        "lng": float(lon),
-                        "include": ["parcel"],
-                    },
-                },
-            }
-            response = client.post(
-                endpoint,
-                headers=call_headers,
-                json=lookup_payload,
-                timeout=25,
-            )
-            if response.status_code in (401, 403):
-                raise RuntimeError("The parcel-data access key was rejected. Check the key and try again.")
-            if response.status_code == 429:
-                raise RuntimeError("The parcel-data service rate limit was reached. Try again later or check your plan limit.")
-            response.raise_for_status()
-            payload = _parse_mcp_json(response)
+        if response.status_code == 402:
+            try:
+                detail = response.json().get("message", "Your Parceled account has insufficient credits or exceeded its budget cap.")
+            except ValueError:
+                detail = "Your Parceled account has insufficient credits or exceeded its budget cap."
+            raise RuntimeError(detail)
+        if response.status_code == 429:
+            raise RuntimeError("Parceled rate limit reached. Please wait and try again.")
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("Parceled returned an unexpected response format.")
+        payload.setdefault("availability", availability)
+        return payload
 
     except requests.Timeout as exc:
         raise RuntimeError("The parcel lookup timed out. Please try again.") from exc
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "unknown"
+        if status in (401, 403):
+            raise RuntimeError(
+                "Parceled rejected the API key. Confirm that Streamlit Secrets uses "
+                "PARCELED_API_KEY and that the value is the Parceled key, not an Apollo key."
+            ) from exc
+        raise RuntimeError(f"Parceled request failed (HTTP {status}).") from exc
     except requests.RequestException as exc:
         raise RuntimeError(f"The parcel lookup could not connect: {exc}") from exc
-
-    if isinstance(payload, dict) and payload.get("error"):
-        error = payload["error"]
-        if isinstance(error, dict):
-            message = error.get("message", "Parcel lookup failed.")
-        else:
-            message = str(error)
-        raise RuntimeError(message)
-
-    result = payload.get("result", {}) if isinstance(payload, dict) else {}
-    if isinstance(result, dict) and result.get("isError"):
-        messages = [
-            str(item.get("text", ""))
-            for item in result.get("content", [])
-            if isinstance(item, dict) and item.get("text")
-        ]
-        raise RuntimeError(" ".join(messages) or "The parcel lookup failed.")
-
-    # Newer MCP responses may provide structuredContent; other responses place
-    # a JSON document in a text content block. Support both formats.
-    structured = result.get("structuredContent") if isinstance(result, dict) else None
-    if structured is not None:
-        return structured
-
-    content_items = result.get("content", []) if isinstance(result, dict) else []
-    for item in content_items:
-        if not isinstance(item, dict):
-            continue
-        text_value = item.get("text")
-        if not text_value:
-            continue
-        try:
-            return json.loads(text_value)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    return result if result else payload
+    except ValueError as exc:
+        raise RuntimeError("Parceled returned invalid JSON. Please try again.") from exc
 
 
 def _land_find_parcel_record(value):
@@ -3474,7 +3437,7 @@ with tab_land_parcel:
         st.caption(
             "A parcel-data access key is required for real parcel identifiers and "
             "assessor records. The key is used server-side for this session. For a "
-            "deployment-wide setup, set PARCEL_DATA_API_KEY in Streamlit secrets."
+            "deployment-wide setup, set PARCELED_API_KEY in Streamlit secrets (PARCEL_DATA_API_KEY is also supported)."
         )
         session_api_key = st.text_input(
             "Parcel data access key",
@@ -3483,7 +3446,7 @@ with tab_land_parcel:
             help="The key is not written into app.py. Configure Streamlit secrets for persistent deployment use.",
         )
         st.markdown(
-            '[Get a free parcel data access key](https://www.parceled.ai/)'
+            '[Parceled API documentation](https://parceled.ai/.well-known/openapi.yaml)'
         )
     parcel_api_key = configured_api_key or st.session_state.get("land_parcel_api_key", "").strip()
 
