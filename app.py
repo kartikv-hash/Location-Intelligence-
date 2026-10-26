@@ -1,6 +1,8 @@
 
 import io
 import json
+import os
+import hashlib
 import re
 import zipfile
 import xml.etree.ElementTree as ET
@@ -2559,8 +2561,8 @@ def render_siteiq():
 # Main workspace tabs follow the SIGNAL flow as closely as the existing
 # feature set permits. SiteIQ includes the site/community screening tools;
 # Transmission network covers interconnection/grid visibility; asset and
-# project views support alternatives/competitor review. AcreValue is last.
-tab_siteiq, tab_transmission_map, tab_asset_map, tab_register, tab_details, tab_analytics, tab_method, tab_acrevalue = st.tabs([
+# project views support alternatives/competitor review. Land & Real Estate is last.
+tab_siteiq, tab_transmission_map, tab_asset_map, tab_register, tab_details, tab_analytics, tab_method, tab_land_parcel = st.tabs([
     "SiteIQ",
     "Transmission network",
     "Renewable assets",
@@ -2568,7 +2570,7 @@ tab_siteiq, tab_transmission_map, tab_asset_map, tab_register, tab_details, tab_
     "Project details",
     "Technology analytics",
     "Data & limitations",
-    "Land & Real Estate (AcreValue)",
+    "Land & Real Estate",
 ])
 
 with tab_siteiq:
@@ -3164,7 +3166,7 @@ Some records may not have coordinates or reported storage energy capacity.
         {"Feature": "Repository transmission CSV/KMZ auto-discovery", "Status": "Implemented"},
         {"Feature": "Voltage-colored transmission lines + legend", "Status": "Implemented"},
         {"Feature": "Grid/substation points from spatial data", "Status": "When point geometry is present"},
-        {"Feature": "Parcel ownership / valuation", "Status": "Not connected"},
+        {"Feature": "Parcel ownership / assessor records", "Status": "Available when parcel data access is configured; coverage varies"},
         {"Feature": "Verified interconnection capacity", "Status": "Not connected"},
         {"Feature": "Live power-market prices", "Status": "Not connected"},
     ])
@@ -3182,30 +3184,576 @@ Some records may not have coordinates or reported storage energy capacity.
 
 
 # ============================================================
-# LAND & REAL ESTATE — ACREVALUE (FINAL SIGNAL TAB)
-# Embeds the provider's own interactive map; no parcel data is scraped
-# or copied into Sunstripe Select.
+# LAND & REAL ESTATE — SITE AND PARCEL INTELLIGENCE (FINAL SIGNAL TAB)
+# Native interactive map + coordinate-based assessor/parcel lookup.
 # ============================================================
 
-with tab_acrevalue:
-    acrevalue_url = "https://www.acrevalue.com/map/?lat=40.8&lng=-90.5&zoom=4"
+
+def _land_data_api_key():
+    """Read a parcel-data key from Streamlit secrets or the environment."""
+    key = os.getenv("PARCEL_DATA_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        return str(st.secrets.get("PARCEL_DATA_API_KEY", "")).strip()
+    except Exception:
+        return ""
+
+
+def _land_geocode_address(query):
+    """Resolve a US address or a 'latitude, longitude' pair."""
+    query = str(query or "").strip()
+    if not query:
+        raise ValueError("Enter a US address or latitude, longitude.")
+
+    coordinate_match = re.fullmatch(
+        r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*",
+        query,
+    )
+    if coordinate_match:
+        lat = float(coordinate_match.group(1))
+        lon = float(coordinate_match.group(2))
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError("The coordinates are outside the valid latitude/longitude range.")
+        return lat, lon, f"Coordinates: {lat:.6f}, {lon:.6f}"
+
+    response = requests.get(
+        "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress",
+        params={
+            "address": query,
+            "benchmark": "Public_AR_Current",
+            "format": "json",
+        },
+        headers={"User-Agent": "SunstripeSelect/1.0"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    body = response.json()
+    matches = body.get("result", {}).get("addressMatches", [])
+    if not matches:
+        raise ValueError("No matching US address was found. Try a more complete address or enter coordinates.")
+    match = matches[0]
+    coordinates = match.get("coordinates", {})
+    lon = float(coordinates["x"])
+    lat = float(coordinates["y"])
+    return lat, lon, match.get("matchedAddress", query)
+
+
+def _parse_mcp_json(response):
+    """Parse either JSON or server-sent-event JSON returned by the data API."""
+    try:
+        return response.json()
+    except ValueError:
+        pass
+
+    for line in response.text.splitlines():
+        if line.startswith("data:"):
+            payload = line[5:].strip()
+            if payload and payload != "[DONE]":
+                try:
+                    return json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+    raise RuntimeError("The parcel-data service returned an unreadable response.")
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _lookup_land_parcel(lat, lon, api_key):
+    """Retrieve assessor-sourced parcel information for a selected coordinate."""
+    endpoint = "https://parceled.ai/api/mcp"
+    base_headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+
+    try:
+        with requests.Session() as client:
+            # Start a standard Streamable HTTP session. The service may be
+            # stateless; in that case the same calls still work without a session ID.
+            init_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "Sunstripe Select", "version": "1.0.0"},
+                },
+            }
+            init_response = client.post(
+                endpoint,
+                headers=base_headers,
+                json=init_payload,
+                timeout=20,
+            )
+            if init_response.status_code in (401, 403):
+                raise RuntimeError("The parcel-data access key was rejected. Check the key and try again.")
+            init_response.raise_for_status()
+            init_data = _parse_mcp_json(init_response)
+
+            session_id = init_response.headers.get("Mcp-Session-Id") or init_response.headers.get("mcp-session-id")
+            negotiated_version = (
+                init_data.get("result", {}).get("protocolVersion")
+                if isinstance(init_data, dict) else None
+            ) or "2025-11-25"
+            call_headers = dict(base_headers)
+            call_headers["MCP-Protocol-Version"] = negotiated_version
+            if session_id:
+                call_headers["Mcp-Session-Id"] = session_id
+
+            # Protocol notification: initialization has completed.
+            client.post(
+                endpoint,
+                headers=call_headers,
+                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                timeout=15,
+            )
+
+            lookup_payload = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_parcels",
+                    "arguments": {
+                        "lat": float(lat),
+                        "lng": float(lon),
+                        "include": ["parcel"],
+                    },
+                },
+            }
+            response = client.post(
+                endpoint,
+                headers=call_headers,
+                json=lookup_payload,
+                timeout=25,
+            )
+            if response.status_code in (401, 403):
+                raise RuntimeError("The parcel-data access key was rejected. Check the key and try again.")
+            if response.status_code == 429:
+                raise RuntimeError("The parcel-data service rate limit was reached. Try again later or check your plan limit.")
+            response.raise_for_status()
+            payload = _parse_mcp_json(response)
+
+    except requests.Timeout as exc:
+        raise RuntimeError("The parcel lookup timed out. Please try again.") from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(f"The parcel lookup could not connect: {exc}") from exc
+
+    if isinstance(payload, dict) and payload.get("error"):
+        error = payload["error"]
+        if isinstance(error, dict):
+            message = error.get("message", "Parcel lookup failed.")
+        else:
+            message = str(error)
+        raise RuntimeError(message)
+
+    result = payload.get("result", {}) if isinstance(payload, dict) else {}
+    if isinstance(result, dict) and result.get("isError"):
+        messages = [
+            str(item.get("text", ""))
+            for item in result.get("content", [])
+            if isinstance(item, dict) and item.get("text")
+        ]
+        raise RuntimeError(" ".join(messages) or "The parcel lookup failed.")
+
+    # Newer MCP responses may provide structuredContent; other responses place
+    # a JSON document in a text content block. Support both formats.
+    structured = result.get("structuredContent") if isinstance(result, dict) else None
+    if structured is not None:
+        return structured
+
+    content_items = result.get("content", []) if isinstance(result, dict) else []
+    for item in content_items:
+        if not isinstance(item, dict):
+            continue
+        text_value = item.get("text")
+        if not text_value:
+            continue
+        try:
+            return json.loads(text_value)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    return result if result else payload
+
+
+def _land_find_parcel_record(value):
+    """Walk a variable API response and find its parcel record, if present."""
+    if isinstance(value, list):
+        for item in value:
+            found = _land_find_parcel_record(item)
+            if found is not None:
+                return found
+        return None
+    if not isinstance(value, dict):
+        return None
+
+    for key, child in value.items():
+        normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+        if normalized in {"parcel", "parcelrecord", "property", "propertyrecord"}:
+            if isinstance(child, dict) and child:
+                return child
+            if isinstance(child, list) and child:
+                first = next((item for item in child if isinstance(item, dict)), None)
+                if first is not None:
+                    return first
+
+    record_keys = {
+        re.sub(r"[^a-z0-9]", "", str(key).lower())
+        for key in value
+    }
+    if record_keys & {
+        "parcelid", "apn", "assessorparcelnumber", "owner", "ownername",
+        "situsaddress", "address", "landsize", "acreage", "acres",
+    }:
+        return value
+
+    for child in value.values():
+        found = _land_find_parcel_record(child)
+        if found is not None:
+            return found
+    return None
+
+
+def _land_flatten_fields(value, parent=""):
+    """Flatten nested parcel properties for a clean field/value table."""
+    flat = {}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            label = f"{parent} · {key}" if parent else str(key)
+            if isinstance(child, dict):
+                flat.update(_land_flatten_fields(child, label))
+            elif isinstance(child, list):
+                if child and all(not isinstance(x, (dict, list)) for x in child):
+                    flat[label] = ", ".join(str(x) for x in child)
+                elif child:
+                    flat[label] = f"{len(child)} record(s)"
+            elif child is not None and str(child).strip() not in {"", "None", "null"}:
+                flat[label] = child
+    elif isinstance(value, list):
+        for index, child in enumerate(value, start=1):
+            flat.update(_land_flatten_fields(child, f"{parent or 'Record'} {index}"))
+    return flat
+
+
+def _land_get_field(record, aliases):
+    if not isinstance(record, dict):
+        return None
+    lookup = {
+        re.sub(r"[^a-z0-9]", "", str(key).lower()): value
+        for key, value in record.items()
+    }
+    for alias in aliases:
+        key = re.sub(r"[^a-z0-9]", "", alias.lower())
+        value = lookup.get(key)
+        if value is not None and str(value).strip() not in {"", "None", "null"}:
+            return value
+    return None
+
+
+with tab_land_parcel:
     st.markdown(
-        '<div class="section-title">Land & Real Estate · AcreValue</div>',
+        '<div class="section-title">Site & Land Parcel Intelligence</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        "Explore AcreValue’s interactive U.S. map for parcel and property details "
-        "made available by AcreValue, such as parcel boundaries, land listings, "
-        "and valuation-related information where supported by your account."
+        "Search a US address or coordinates, or click the map. When parcel records "
+        "are connected, the selected parcel's available assessor and land information "
+        "will load automatically."
     )
-    st.link_button("Open AcreValue directly ↗", acrevalue_url)
+
+    # Use a deployment secret/environment variable for production; the session
+    # input is available for quick testing without putting credentials in source code.
+    configured_api_key = _land_data_api_key()
+    with st.expander(
+        "Parcel data connection",
+        expanded=not bool(configured_api_key or st.session_state.get("land_parcel_api_key", "")),
+    ):
+        st.caption(
+            "A parcel-data access key is required for real parcel identifiers and "
+            "assessor records. The key is used server-side for this session. For a "
+            "deployment-wide setup, set PARCEL_DATA_API_KEY in Streamlit secrets."
+        )
+        session_api_key = st.text_input(
+            "Parcel data access key",
+            type="password",
+            key="land_parcel_api_key",
+            help="The key is not written into app.py. Configure Streamlit secrets for persistent deployment use.",
+        )
+        st.markdown(
+            '[Get a free parcel data access key](https://www.parceled.ai/)'
+        )
+    parcel_api_key = configured_api_key or st.session_state.get("land_parcel_api_key", "").strip()
+
+    if not parcel_api_key:
+        st.info(
+            "The interactive map is ready to use. Add the parcel data access key above "
+            "to enable one-click property and assessor-record lookup. Without a data "
+            "connection, this app cannot reliably show actual parcel ownership, sales, or values."
+        )
+
+    with st.form("land_parcel_address_form", clear_on_submit=False):
+        address_col, search_col = st.columns([5, 1])
+        with address_col:
+            land_search_query = st.text_input(
+                "Find a site",
+                placeholder="Enter a US address or coordinates, e.g. 39.7392, -104.9903",
+                key="land_parcel_search_query",
+            )
+        with search_col:
+            st.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
+            land_search_submitted = st.form_submit_button(
+                "Find site", type="primary", use_container_width=True
+            )
+
+    if "land_selected_lat" not in st.session_state:
+        st.session_state.land_selected_lat = None
+    if "land_selected_lon" not in st.session_state:
+        st.session_state.land_selected_lon = None
+    if "land_selected_label" not in st.session_state:
+        st.session_state.land_selected_label = ""
+    if "land_lookup_result" not in st.session_state:
+        st.session_state.land_lookup_result = None
+    if "land_lookup_key" not in st.session_state:
+        st.session_state.land_lookup_key = None
+    if "land_map_click_processed" not in st.session_state:
+        st.session_state.land_map_click_processed = None
+
+    if land_search_submitted:
+        try:
+            found_lat, found_lon, found_label = _land_geocode_address(land_search_query)
+            st.session_state.land_selected_lat = found_lat
+            st.session_state.land_selected_lon = found_lon
+            st.session_state.land_selected_label = found_label
+            st.session_state.land_lookup_result = None
+            st.session_state.land_lookup_key = None
+        except Exception as exc:
+            st.error(str(exc))
+
+    has_selected_location = (
+        st.session_state.land_selected_lat is not None
+        and st.session_state.land_selected_lon is not None
+    )
+    if has_selected_location:
+        map_center = [st.session_state.land_selected_lat, st.session_state.land_selected_lon]
+        map_zoom = 15
+    else:
+        map_center = [40.8, -90.5]
+        map_zoom = 4
+
+    parcel_map = folium.Map(
+        location=map_center,
+        zoom_start=map_zoom,
+        tiles=None,
+        control_scale=True,
+        prefer_canvas=True,
+    )
+    folium.TileLayer(
+        tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attr="© OpenStreetMap contributors",
+        name="Street map",
+        show=True,
+    ).add_to(parcel_map)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri World Imagery",
+        name="Satellite imagery",
+        show=False,
+    ).add_to(parcel_map)
+    # Nationwide parcel-outline tiles render at detailed map zoom levels. They
+    # display parcel geometry but do not expose private assessor attributes.
+    folium.TileLayer(
+        tiles=(
+            "https://tiles.arcgis.com/tiles/KzeiCaQsMoeCfoCq/arcgis/rest/services/"
+            "Regrid_Nationwide_Parcel_Boundaries_v1/MapServer/tile/{z}/{y}/{x}"
+        ),
+        attr="Parcel boundaries © Regrid; hosted by Esri",
+        name="US parcel boundaries",
+        overlay=True,
+        control=True,
+        show=True,
+        min_zoom=15,
+        max_zoom=17,
+    ).add_to(parcel_map)
+    MousePosition(
+        position="bottomleft",
+        separator=" | ",
+        prefix="Coordinates:",
+        num_digits=5,
+    ).add_to(parcel_map)
+    if has_selected_location:
+        folium.Marker(
+            [st.session_state.land_selected_lat, st.session_state.land_selected_lon],
+            tooltip="Selected site",
+            popup=st.session_state.land_selected_label or "Selected site",
+            icon=folium.Icon(color="red", icon="map-marker", prefix="fa"),
+        ).add_to(parcel_map)
+    folium.LayerControl(collapsed=True).add_to(parcel_map)
+
+    map_result = st_folium(
+        parcel_map,
+        width=None,
+        height=600,
+        key="sunstripe_land_parcel_map",
+        returned_objects=["last_clicked"],
+    )
     st.caption(
-        "The map is provided by AcreValue. Its embedding settings may prevent it "
-        "from displaying inside another website; if the panel is blank or limited, "
-        "use the direct link above. Some property information may require an "
-        "AcreValue account or subscription."
+        "The nationwide parcel-outline layer becomes visible when zoomed in to "
+        "parcel scale (zoom 15–17). Click a location to select it and load available "
+        "property records below when the parcel-data connection is configured."
     )
-    st.components.v1.iframe(acrevalue_url, height=720, scrolling=True)
+
+    if map_result and map_result.get("last_clicked"):
+        click_lat = float(map_result["last_clicked"]["lat"])
+        click_lon = float(map_result["last_clicked"]["lng"])
+        click_key = f"{click_lat:.6f},{click_lon:.6f}"
+        if click_key != st.session_state.land_map_click_processed:
+            st.session_state.land_map_click_processed = click_key
+            st.session_state.land_selected_lat = click_lat
+            st.session_state.land_selected_lon = click_lon
+            st.session_state.land_selected_label = f"Selected map point: {click_lat:.6f}, {click_lon:.6f}"
+            st.session_state.land_lookup_result = None
+            st.session_state.land_lookup_key = None
+            st.rerun()
+
+    # A location is queried exactly once per selected coordinate when a key is available.
+    if (
+        parcel_api_key
+        and st.session_state.land_selected_lat is not None
+        and st.session_state.land_selected_lon is not None
+    ):
+        selected_lat = float(st.session_state.land_selected_lat)
+        selected_lon = float(st.session_state.land_selected_lon)
+        key_fingerprint = hashlib.sha256(parcel_api_key.encode("utf-8")).hexdigest()[:12]
+        selected_key = f"{selected_lat:.6f},{selected_lon:.6f}:{key_fingerprint}"
+        if selected_key != st.session_state.land_lookup_key:
+            with st.spinner("Looking up parcel and assessor records…"):
+                try:
+                    result = _lookup_land_parcel(selected_lat, selected_lon, parcel_api_key)
+                    st.session_state.land_lookup_result = {"ok": True, "data": result}
+                    st.session_state.land_lookup_key = selected_key
+                except Exception as exc:
+                    st.session_state.land_lookup_result = {"ok": False, "error": str(exc)}
+                    st.session_state.land_lookup_key = selected_key
+
+    if st.session_state.land_selected_lat is not None:
+        st.markdown(
+            '<div class="section-title">Selected site</div>',
+            unsafe_allow_html=True,
+        )
+        selected_lat_for_context = float(st.session_state.land_selected_lat)
+        selected_lon_for_context = float(st.session_state.land_selected_lon)
+        st.caption(
+            f"{st.session_state.land_selected_label or 'Selected location'} · "
+            f"{selected_lat_for_context:.6f}, {selected_lon_for_context:.6f}"
+        )
+        try:
+            site_county, site_state, site_address = reverse_geocode(
+                round(selected_lat_for_context, 5), round(selected_lon_for_context, 5)
+            )
+            site_context_cols = st.columns(3)
+            site_context_cols[0].metric(
+                "County", site_county if site_county and site_county != "Unknown" else "Not available"
+            )
+            site_context_cols[1].metric(
+                "State", site_state if site_state and site_state != "Unknown" else "Not available"
+            )
+            site_context_cols[2].metric("Coordinates", f"{selected_lat_for_context:.4f}, {selected_lon_for_context:.4f}")
+            if site_address:
+                st.caption(f"Mapped location: {site_address}")
+        except Exception:
+            pass
+
+        lookup_result = st.session_state.land_lookup_result
+        if not parcel_api_key:
+            st.info("Add the parcel data access key above to retrieve the selected parcel's actual property records.")
+        elif lookup_result and not lookup_result.get("ok"):
+            st.error(lookup_result.get("error", "Parcel lookup failed."))
+        elif lookup_result and lookup_result.get("ok"):
+            payload = lookup_result.get("data")
+            parcel_record = _land_find_parcel_record(payload)
+            if parcel_record:
+                address_value = _land_get_field(
+                    parcel_record,
+                    ["address", "situsAddress", "propertyAddress", "siteAddress", "streetAddress"],
+                )
+                parcel_id = _land_get_field(
+                    parcel_record,
+                    ["parcelId", "parcel_id", "apn", "APN", "parcelNumber", "assessorParcelNumber", "parcelNumberFormatted"],
+                )
+                acreage = _land_get_field(
+                    parcel_record,
+                    ["acres", "acreage", "landAcres", "lotAcres", "landSizeAcres", "sizeAcres", "landSize"],
+                )
+                owner = _land_get_field(
+                    parcel_record,
+                    ["owner", "ownerName", "owner_name", "propertyOwner", "primaryOwner"],
+                )
+                sale_price = _land_get_field(
+                    parcel_record,
+                    ["lastSalePrice", "salePrice", "last_sale_price", "lastSaleAmount", "sale_amount"],
+                )
+                sale_date = _land_get_field(
+                    parcel_record,
+                    ["lastSaleDate", "saleDate", "last_sale_date", "recordedSaleDate"],
+                )
+                county = _land_get_field(parcel_record, ["county", "countyName"])
+                state = _land_get_field(parcel_record, ["state", "stateName", "stateCode"])
+
+                metric_cols = st.columns(3)
+                metric_cols[0].metric("Property address", str(address_value or "Not reported"))
+                metric_cols[1].metric("Parcel / APN", str(parcel_id or "Not reported"))
+                metric_cols[2].metric("Land area", str(acreage or "Not reported"))
+
+                detail_rows = []
+                preferred = [
+                    ("Owner", owner),
+                    ("County", county),
+                    ("State", state),
+                    ("Last sale date", sale_date),
+                    ("Last sale price", sale_price),
+                ]
+                for label, value in preferred:
+                    if value is not None and str(value).strip():
+                        detail_rows.append({"Property field": label, "Available record": value})
+
+                flat_fields = _land_flatten_fields(parcel_record)
+                already = {re.sub(r"[^a-z0-9]", "", row["Property field"].lower()) for row in detail_rows}
+                preferred_alias_norms = {
+                    "owner", "county", "state", "lastsaledate", "saleprice",
+                    "lastsaleprice", "address", "situsaddress", "parcelid", "apn",
+                    "acres", "acreage", "landsize", "landsiz acres".replace(" ", ""),
+                }
+                for field, value in flat_fields.items():
+                    normalized_field = re.sub(r"[^a-z0-9]", "", field.lower())
+                    if normalized_field not in preferred_alias_norms:
+                        detail_rows.append({"Property field": field, "Available record": value})
+
+                if county or state:
+                    st.caption("Jurisdiction: " + ", ".join(str(v) for v in [county, state] if v))
+                if detail_rows:
+                    st.dataframe(
+                        pd.DataFrame(detail_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info("A parcel record was returned, but it did not include additional displayable fields.")
+                with st.expander("View complete parcel record"):
+                    st.json(payload)
+            else:
+                st.warning(
+                    "No parcel record was returned for this point. Move the marker to the parcel interior or try a nearby coordinate."
+                )
+                with st.expander("View lookup response"):
+                    st.json(payload)
+
+    st.caption(
+        "Property data is sourced from assessor/recorder records where available. "
+        "Coverage and field availability vary by jurisdiction; missing fields are not inferred."
+    )
 
 
 # ============================================================
