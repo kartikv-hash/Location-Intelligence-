@@ -40,7 +40,7 @@ RED = "#E8392D"
 BLACK = "#000000"
 WHITE = "#FFFFFF"
 LINE = "#E7E0DB"
-FONT = "DM Sans, Arial, sans-serif"
+FONT = "Inter, 'DM Sans', Arial, sans-serif"
 
 TECH_COLORS = {
     "Solar": "#D9A72E",
@@ -87,11 +87,20 @@ MAP_LAYOUT_KEY = "map" if USE_MAPLIBRE_API else "mapbox"
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
 
-html, body, [class*="css"], button, input, textarea, select {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+/* One consistent, modern type system across Streamlit widgets and page content. */
+html, body, button, input, textarea, select,
+[data-testid="stAppViewContainer"] *,
+[data-testid="stSidebar"] * {
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* Keep Streamlit's icon glyphs on their own icon font. */
+.material-icons, .material-symbols-rounded, [data-testid="stIconMaterial"] {
+    font-family: 'Material Symbols Rounded', 'Material Icons' !important;
 }
 
 .stApp {
@@ -132,7 +141,7 @@ header[data-testid="stHeader"] {
 }
 
 .brand {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     text-align: center;
     font-size: 25px;
     font-weight: 700;
@@ -186,7 +195,7 @@ header[data-testid="stHeader"] {
 }
 
 .hero {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     font-size: clamp(32px, 3.4vw, 43px);
     font-weight: 700;
     font-style: normal;
@@ -264,7 +273,7 @@ header[data-testid="stHeader"] {
 }
 
 .stTabs [data-baseweb="tab"] {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     font-size: 13px;
     font-weight: 600;
     background: transparent;
@@ -299,7 +308,7 @@ div[data-testid="stMetricLabel"] * {
 }
 
 div[data-testid="stMetricValue"] {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     font-size: 26px;
     font-weight: 700;
     color: #E8392D !important;
@@ -308,7 +317,7 @@ div[data-testid="stMetricValue"] {
 /* Buttons */
 .stButton button,
 .stDownloadButton button {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     font-size: 13px;
     font-weight: 600;
     border-radius: 22px;
@@ -338,7 +347,7 @@ div[data-testid="stDataFrame"] {
 }
 
 .stApp input, .stApp textarea {
-    font-family: 'DM Sans', Arial, sans-serif !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     color: #000000 !important;
 }
 
@@ -346,6 +355,74 @@ div[data-testid="stDataFrame"] {
 .stApp textarea::placeholder {
     color: #000000 !important;
     opacity: 0.7;
+}
+
+/* Sunstripe AI chat: readable input, soft borders and warm, friendly message cards. */
+div[data-testid="stChatInput"] {
+    background: #FFFFFF !important;
+    border: 1px solid #E7DCD5 !important;
+    border-radius: 18px !important;
+    box-shadow: 0 10px 28px rgba(25, 20, 35, 0.09) !important;
+    padding: 5px 8px !important;
+    transition: border-color .18s ease, box-shadow .18s ease;
+}
+div[data-testid="stChatInput"]:focus-within {
+    border-color: #E8392D !important;
+    box-shadow: 0 0 0 3px rgba(232, 57, 45, 0.12), 0 10px 28px rgba(25, 20, 35, 0.08) !important;
+}
+div[data-testid="stChatInput"] > div,
+div[data-testid="stChatInput"] [data-baseweb="textarea"] {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+div[data-testid="stChatInput"] textarea {
+    background: transparent !important;
+    color: #171923 !important;
+    caret-color: #E8392D !important;
+    font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
+    font-size: 14px !important;
+    line-height: 1.5 !important;
+}
+div[data-testid="stChatInput"] textarea::placeholder {
+    color: #777681 !important;
+    opacity: 1 !important;
+}
+div[data-testid="stChatInput"] button {
+    background: #E8392D !important;
+    color: #FFFFFF !important;
+    border: 0 !important;
+    border-radius: 12px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    transition: transform .16s ease, background .16s ease;
+}
+div[data-testid="stChatInput"] button:hover {
+    background: #C92C24 !important;
+    transform: translateY(-1px);
+}
+div[data-testid="stChatMessage"] {
+    border: 1px solid #EEE4DE;
+    border-radius: 18px;
+    background: #FFFFFF;
+    padding: 14px 17px;
+    margin: 10px 0;
+    box-shadow: 0 4px 14px rgba(25, 20, 35, 0.035);
+}
+div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+    background: linear-gradient(135deg, #FFFFFF 0%, #FFF9F5 100%);
+    border-color: #F0E4DD;
+}
+div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+    background: #FFF1EB;
+    border-color: #F2D4C9;
+}
+.stButton button {
+    transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.stButton button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 5px 13px rgba(232, 57, 45, 0.12);
 }
 
 hr {
@@ -388,11 +465,116 @@ section[data-testid="stSidebar"] input {
     padding: 10px 0;
 }
 
+/* Sunstripe AI welcome card and starter prompts. */
+.ss-ai-hero {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(115deg, #FFF1E9 0%, #FFFAF6 56%, #F6F4FB 100%);
+    border: 1px solid #F0DED5;
+    border-top: 3px solid #E8392D;
+    border-radius: 22px;
+    padding: 22px 24px 20px;
+    margin: 6px 0 14px;
+    box-shadow: 0 10px 30px rgba(42, 28, 34, 0.045);
+}
+.ss-ai-hero::after {
+    content: "";
+    position: absolute;
+    width: 170px;
+    height: 170px;
+    border-radius: 50%;
+    right: -50px;
+    top: -82px;
+    background: rgba(232, 57, 45, 0.065);
+    pointer-events: none;
+}
+.ss-ai-orb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+    color: #FFFFFF !important;
+    font-size: 25px;
+    background: linear-gradient(145deg, #F54C3F 0%, #D52D25 100%);
+    box-shadow: 0 7px 17px rgba(232, 57, 45, 0.22);
+}
+.ss-ai-copy { min-width: 0; flex: 1; }
+.ss-ai-eyebrow {
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.4;
+    letter-spacing: 1.55px;
+    color: #D93429 !important;
+    margin: 1px 0 6px;
+}
+.ss-ai-eyebrow span { color: #B9A39A !important; padding: 0 4px; }
+.ss-ai-title {
+    font-size: clamp(21px, 2.2vw, 27px);
+    font-weight: 750;
+    line-height: 1.24;
+    letter-spacing: -0.75px;
+    color: #111526 !important;
+    margin: 0 0 7px;
+}
+.ss-ai-description {
+    max-width: 800px;
+    color: #55515A !important;
+    font-size: 13px;
+    line-height: 1.65;
+}
+.ss-ai-tags { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 13px; }
+.ss-ai-tags span {
+    padding: 5px 10px;
+    border: 1px solid rgba(221, 205, 197, .88);
+    border-radius: 999px;
+    background: rgba(255,255,255,.72);
+    color: #39343A !important;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.ss-ai-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    margin: 2px 0 0 auto;
+    padding: 7px 10px;
+    border: 1px solid #D8E9D9;
+    border-radius: 999px;
+    background: rgba(255,255,255,.75);
+    color: #386846 !important;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.ss-ai-live-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #38A169;
+    box-shadow: 0 0 0 3px rgba(56,161,105,.12);
+}
+
 @media (max-width: 768px) {
     .brand { font-size: 22px; }
     .navrow { gap: 14px; font-size: 12px; }
     .hero { font-size: 32px; letter-spacing: -0.7px; }
     .subtitle { font-size: 14px; }
+    .ss-ai-hero { padding: 17px 15px; gap: 12px; border-radius: 18px; }
+    .ss-ai-orb { flex-basis: 40px; width: 40px; height: 40px; border-radius: 13px; }
+    .ss-ai-live { display: none; }
+    .ss-ai-title { font-size: 21px; }
+    .ss-ai-description { font-size: 12px; }
+    .ss-ai-tags { gap: 5px; }
+    .ss-ai-tags span { font-size: 10px; padding: 4px 8px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1665,39 +1847,68 @@ def _sunstripe_ai_answer(chat_messages):
 
 
 st.markdown(
-    '<div style="background:#F4F2EF;border:1px solid #E7E0DB;border-top:3px solid #E8392D;padding:18px 20px 8px;margin:0 0 24px 0;">'
-    '<div style="font-size:11px;font-weight:700;letter-spacing:1.4px;color:#E8392D;">SUNSTRIPE AI</div>'
-    '<div style="font-size:23px;font-weight:700;color:#050714;margin:4px 0 5px;">Your renewable energy intelligence copilot</div>'
-    '<div style="font-size:13px;color:#333;">Ask about sites, land, grid access, BESS economics, ERCOT and other power markets. Web research is enabled for current information.</div>'
-    '</div>',
+    """
+    <section class="ss-ai-hero">
+      <div class="ss-ai-orb" aria-hidden="true">✦</div>
+      <div class="ss-ai-copy">
+        <div class="ss-ai-eyebrow">SUNSTRIPE AI <span>•</span> LIVE WEB RESEARCH</div>
+        <div class="ss-ai-title">Your energy intelligence copilot</div>
+        <div class="ss-ai-description">Tell me what you’re working on. I’ll help you explore sites, grid access, power markets and renewable opportunities.</div>
+        <div class="ss-ai-tags"><span>☀️ Solar</span><span>🌬️ Wind</span><span>🔋 BESS</span><span>⚡ Grid &amp; nodal</span></div>
+      </div>
+      <div class="ss-ai-live"><span class="ss-ai-live-dot"></span> Web search enabled</div>
+    </section>
+    """,
     unsafe_allow_html=True,
 )
 
 if "sunstripe_ai_messages" not in st.session_state:
     st.session_state.sunstripe_ai_messages = [
-        {"role": "assistant", "content": "Hi! I’m Sunstripe AI. Ask me to evaluate a site, explain an interconnection issue, research a market, or compare solar, wind and BESS opportunities.", "sources": []}
+        {"role": "assistant", "content": "Hi! I’m Sunstripe AI 👋\n\nI can help you evaluate a site, unpack an interconnection issue, research a market, or compare solar, wind and BESS opportunities. What are we exploring today?", "sources": []}
     ]
+
+# Clickable starter prompts feed directly into the same chat pipeline.
+_sunstripe_starters = [
+    ("☀️  Screen a solar site", "Help me screen a potential utility-scale solar site. What inputs and constraints should I evaluate first?"),
+    ("🔋  Explore BESS revenue", "Help me evaluate a utility-scale BESS opportunity, including duration, revenue streams, and the market data required."),
+    ("⚡  Check grid & nodal", "Explain how to assess interconnection and nodal price risk for a renewable or BESS project in the US."),
+    ("🌬️  Compare technologies", "Compare solar, wind, and BESS development opportunities for a US project, and tell me what project details you need."),
+]
+_starter_cols = st.columns(4, gap="small")
+for _starter_index, (_starter_label, _starter_prompt) in enumerate(_sunstripe_starters):
+    with _starter_cols[_starter_index]:
+        if st.button(_starter_label, key=f"sunstripe_ai_starter_{_starter_index}", use_container_width=True):
+            st.session_state["sunstripe_ai_pending_prompt"] = _starter_prompt
+            st.rerun()
 
 with st.container(border=True):
     for _msg in st.session_state.sunstripe_ai_messages:
         with st.chat_message(_msg["role"]):
             st.markdown(_msg["content"])
             if _msg.get("sources"):
-                with st.expander(f"Sources ({len(_msg['sources'])})"):
+                with st.expander(f"🔎 Sources ({len(_msg['sources'])})"):
                     for _source in _msg["sources"]:
                         st.markdown(f"- [{_source['title']}]({_source['url']})")
-    _ai_prompt = st.chat_input("Ask Sunstripe AI about a site, market, grid node or BESS opportunity…", key="sunstripe_ai_prompt")
+
+    _ai_prompt = st.chat_input(
+        "Ask about a site, grid node, BESS opportunity or power market…",
+        key="sunstripe_ai_prompt",
+    )
+    _pending_ai_prompt = st.session_state.pop("sunstripe_ai_pending_prompt", None)
+    if _pending_ai_prompt:
+        _ai_prompt = _pending_ai_prompt
+
     if _ai_prompt:
         st.session_state.sunstripe_ai_messages.append({"role": "user", "content": _ai_prompt, "sources": []})
         with st.chat_message("user"):
             st.markdown(_ai_prompt)
         with st.chat_message("assistant"):
-            with st.spinner("Researching and preparing an answer…"):
+            with st.spinner("Sunstripe AI is researching…"):
                 try:
                     _ai_answer, _ai_sources = _sunstripe_ai_answer(st.session_state.sunstripe_ai_messages)
                     st.markdown(_ai_answer)
                     if _ai_sources:
-                        with st.expander(f"Sources ({len(_ai_sources)})"):
+                        with st.expander(f"🔎 Sources ({len(_ai_sources)})"):
                             for _source in _ai_sources:
                                 st.markdown(f"- [{_source['title']}]({_source['url']})")
                     st.session_state.sunstripe_ai_messages.append({"role": "assistant", "content": _ai_answer, "sources": _ai_sources})
