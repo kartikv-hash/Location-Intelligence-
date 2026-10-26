@@ -3268,11 +3268,7 @@ def _parse_mcp_json(response):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _lookup_land_parcel(lat, lon, api_key):
-    """Check dataset coverage, then fetch parcel data through Parceled REST API.
-
-    Availability checks are free and require no key. The parcel request only
-    asks for the parcel field to avoid opting into additional billable datasets.
-    """
+    """Check free coverage first, then request parcel and assessor fields via Parceled GraphQL."""
     base_url = "https://parceled.ai/api/v1"
     headers = {
         "Authorization": f"Bearer {api_key.strip()}",
@@ -3281,7 +3277,7 @@ def _lookup_land_parcel(lat, lon, api_key):
     }
 
     try:
-        # First check coverage before making a billable parcel-data request.
+        # Coverage lookup is free and prevents paid requests where parcel data is absent.
         availability_response = requests.get(
             f"{base_url}/check-availability",
             params={"lat": float(lat), "lng": float(lon)},
@@ -3294,22 +3290,46 @@ def _lookup_land_parcel(lat, lon, api_key):
 
         if not availability.get("parcel", False):
             return {
-                "data": {"parcel": None},
+                "data": {"getParcel": {"parcel": None, "taxAssessor": None}},
                 "availability": availability,
                 "message": "Parceled reports no parcel dataset at this coordinate. Try a point inside the parcel or another location.",
             }
 
-        response = requests.get(
-            f"{base_url}/parcels",
-            params={"lat": float(lat), "lng": float(lon), "include": "parcel"},
+        # Request only the fields used by this tab. Assessor fields may legitimately
+        # be null for a jurisdiction even when the parcel itself is found.
+        query = """
+        query GetParcel($lat: Float!, $lng: Float!) {
+          getParcel(lat: $lat, lng: $lng) {
+            parcel {
+              address
+              city
+              state
+              zipcode
+              parcelId
+              latitude
+              longitude
+            }
+            taxAssessor {
+              ownerType
+              assessedValueLand
+              assessedValueTotal
+              lastSaleDate
+              lastSaleAmount
+              deedLastSalePrice
+            }
+          }
+        }
+        """
+        response = requests.post(
+            "https://parceled.ai/api",
+            json={"query": query, "variables": {"lat": float(lat), "lng": float(lon)}},
             headers=headers,
             timeout=25,
         )
         if response.status_code in (401, 403):
             raise RuntimeError(
-                "Parceled rejected the API key (HTTP 401/403). In Streamlit Secrets, set "
-                "PARCELED_API_KEY to the key returned by Parceled's createParceledAccount "
-                "mutation, without extra spaces. Do not use an Apollo GraphOS key."
+                "Parceled rejected the API key (HTTP 401/403). Check the PARCELED_API_KEY "
+                "value in Streamlit Secrets; do not use an Apollo GraphOS key."
             )
         if response.status_code == 402:
             try:
@@ -3320,9 +3340,12 @@ def _lookup_land_parcel(lat, lon, api_key):
         if response.status_code == 429:
             raise RuntimeError("Parceled rate limit reached. Please wait and try again.")
         response.raise_for_status()
-        payload = response.json()
+        payload = _parse_mcp_json(response)
         if not isinstance(payload, dict):
             raise RuntimeError("Parceled returned an unexpected response format.")
+        if payload.get("errors"):
+            messages = [str(item.get("message", "GraphQL request failed")) for item in payload["errors"] if isinstance(item, dict)]
+            raise RuntimeError("Parceled lookup error: " + "; ".join(messages[:2]))
         payload.setdefault("availability", availability)
         return payload
 
@@ -3331,10 +3354,7 @@ def _lookup_land_parcel(lat, lon, api_key):
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "unknown"
         if status in (401, 403):
-            raise RuntimeError(
-                "Parceled rejected the API key. Confirm that Streamlit Secrets uses "
-                "PARCELED_API_KEY and that the value is the Parceled key, not an Apollo key."
-            ) from exc
+            raise RuntimeError("Parceled rejected the API key. Confirm PARCELED_API_KEY in Streamlit Secrets.") from exc
         raise RuntimeError(f"Parceled request failed (HTTP {status}).") from exc
     except requests.RequestException as exc:
         raise RuntimeError(f"The parcel lookup could not connect: {exc}") from exc
@@ -3636,7 +3656,16 @@ with tab_land_parcel:
             st.error(lookup_result.get("error", "Parcel lookup failed."))
         elif lookup_result and lookup_result.get("ok"):
             payload = lookup_result.get("data")
-            parcel_record = _land_find_parcel_record(payload)
+            # GraphQL returns parcel and assessor records as siblings. Combine them
+            # for display while retaining the original response in the JSON expander.
+            response_data = payload.get("data", {}) if isinstance(payload, dict) else {}
+            get_parcel = response_data.get("getParcel", {}) if isinstance(response_data, dict) else {}
+            parcel_record = get_parcel.get("parcel") if isinstance(get_parcel, dict) else None
+            tax_assessor_record = get_parcel.get("taxAssessor") if isinstance(get_parcel, dict) else None
+            if isinstance(parcel_record, dict) and isinstance(tax_assessor_record, dict):
+                parcel_record = {**parcel_record, "taxAssessor": tax_assessor_record}
+            if not isinstance(parcel_record, dict) or not parcel_record:
+                parcel_record = _land_find_parcel_record(payload)
             if parcel_record:
                 address_value = _land_get_field(
                     parcel_record,
