@@ -1776,74 +1776,84 @@ Location and Site Intelligence for Renewable Energy and Large Loads
 
 # ============================================================
 # SUNSTRIPE AI — REAL-TIME RESEARCH CHATBOX
-# Uses OpenAI Responses API + live web search.
-# Configure OPENAI_API_KEY in Streamlit Secrets.
+# Uses Groq chat completions + built-in browser search.
+# Configure GROQ_API_KEY in Streamlit Secrets.
 # ============================================================
 
 def _sunstripe_ai_answer(chat_messages):
-    """Answer using OpenAI Responses API with live web search and source citations."""
+    """Answer with Groq chat completions and built-in browser search."""
     api_key = ""
-    model = "gpt-5.5"
+    model = "openai/gpt-oss-120b"
     try:
-        api_key = str(st.secrets.get("OPENAI_API_KEY", "")).strip().strip("\"'")
-        model = str(st.secrets.get("OPENAI_MODEL", model)).strip() or model
+        api_key = str(st.secrets.get("GROQ_API_KEY", "")).strip().strip("\"'")
+        model = str(st.secrets.get("GROQ_MODEL", model)).strip() or model
     except Exception:
         pass
     if not api_key:
-        api_key = os.getenv("OPENAI_API_KEY", "").strip().strip("\"'")
+        api_key = os.getenv("GROQ_API_KEY", "").strip().strip("\"'")
     if not model:
-        model = os.getenv("OPENAI_MODEL", "gpt-5.5").strip() or "gpt-5.5"
+        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() or "openai/gpt-oss-120b"
     if not api_key:
         raise RuntimeError(
-            "AI chat is not configured yet. Add OPENAI_API_KEY to Streamlit Cloud → Settings → Secrets, then reboot the app."
+            "Sunstripe AI needs a Groq API key. Create one at https://console.groq.com/keys, "
+            "then add GROQ_API_KEY to Streamlit Cloud → Settings → Secrets. Groq's free tier "
+            "has usage limits; no OpenAI key or OpenAI credits are required."
         )
 
-    instructions = """You are Sunstripe SELECT AI, an analyst copilot for utility-scale solar, wind, battery energy storage systems (BESS), large loads and US power markets. Help users with site screening, land, permitting, transmission, interconnection, nodal/LMP analysis, project competitors, and market/regulatory research. Use live web search for questions involving current or real-time facts, regulations, prices, project status, or recent news. Prefer primary sources such as ISO/RTOs, FERC, NERC, EIA, DOE, state agencies and official project filings. Clearly distinguish sourced facts from estimates and assumptions. Never invent live prices, grid capacity, parcel facts, or project status. State the date/time context when relevant and include clickable citations from web search. Keep answers practical, structured and concise; ask one focused follow-up only when essential. The app's local charts or sample datasets are not live market data unless explicitly connected to a live source."""
-    input_items = [{"role": "developer", "content": instructions}]
+    instructions = """You are Sunstripe SELECT AI, an analyst copilot for utility-scale solar, wind, battery energy storage systems (BESS), large loads and US power markets. Help users with site screening, land, permitting, transmission, interconnection, nodal/LMP analysis, project competitors, and market/regulatory research. Use the enabled browser search to verify current facts, regulations, prices, project status, and recent news. Prefer primary sources such as ISO/RTOs, FERC, NERC, EIA, DOE, state agencies and official project filings. Clearly distinguish sourced facts from estimates and assumptions. Never invent live prices, grid capacity, parcel facts, or project status. State the date context when relevant and include source URLs/citations when available. Keep answers practical, structured and concise; ask one focused follow-up only when essential. The app's local charts or sample datasets are not live market data unless explicitly connected to a live source."""
+    messages = [{"role": "system", "content": instructions}]
     for item in chat_messages[-12:]:
         role = item.get("role", "user")
         if role not in ("user", "assistant"):
             continue
-        input_items.append({"role": role, "content": item.get("content", "")})
+        content = str(item.get("content", "")).strip()
+        if content:
+            messages.append({"role": role, "content": content})
 
+    # GPT-OSS supports Groq's built-in browser search for current information.
     response = requests.post(
-        "https://api.openai.com/v1/responses",
+        "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": model,
-            "input": input_items,
-            "tools": [{"type": "web_search", "search_context_size": "medium"}],
-            "tool_choice": "auto",
+            "messages": messages,
+            "tools": [{"type": "browser_search"}],
+            "tool_choice": "required",
+            "temperature": 0.2,
+            "max_completion_tokens": 4096,
         },
         timeout=120,
     )
     if response.status_code >= 400:
         try:
-            detail = response.json().get("error", {}).get("message", response.text[:500])
-        except ValueError:
+            body = response.json()
+            detail = body.get("error", {}).get("message", response.text[:500])
+        except (ValueError, AttributeError):
             detail = response.text[:500]
-        raise RuntimeError(f"OpenAI API error ({response.status_code}): {detail}")
+        if response.status_code == 401:
+            raise RuntimeError("Groq rejected the API key. Check GROQ_API_KEY in Streamlit Secrets.")
+        if response.status_code == 429:
+            raise RuntimeError("Groq's free-tier rate limit was reached. Wait a little and try again; no automatic charge will be made.")
+        raise RuntimeError(f"Groq API error ({response.status_code}): {detail}")
+
     payload = response.json()
-    answer_parts, sources = [], []
-    for output_item in payload.get("output", []):
-        if output_item.get("type") != "message":
-            continue
-        for content_item in output_item.get("content", []):
-            if content_item.get("type") == "output_text":
-                text_part = content_item.get("text", "")
-                if text_part:
-                    answer_parts.append(text_part)
-                for annotation in content_item.get("annotations", []):
-                    if annotation.get("type") == "url_citation":
-                        citation = annotation.get("url_citation", annotation)
-                        url = citation.get("url")
-                        title = citation.get("title") or url
-                        if url and not any(source.get("url") == url for source in sources):
-                            sources.append({"title": title, "url": url})
-    answer = "\n\n".join(answer_parts).strip()
+    choices = payload.get("choices", [])
+    answer = ""
+    if choices:
+        answer = str(choices[0].get("message", {}).get("content") or "").strip()
     if not answer:
-        raise RuntimeError("The AI service returned no text. Please try again.")
-    return answer, sources
+        raise RuntimeError("Groq returned no text. Please try again.")
+
+    # Groq browser-search citations are commonly included inline in the answer.
+    # Also expose any explicit URLs returned by the model as clickable source links.
+    import re
+    urls = re.findall(r"https?://[^\s)\]}>]+", answer)
+    sources = []
+    for url in urls:
+        clean_url = url.rstrip(".,;:")
+        if not any(source.get("url") == clean_url for source in sources):
+            sources.append({"title": clean_url, "url": clean_url})
+    return answer, sources[:8]
 
 
 st.markdown(
@@ -1851,7 +1861,7 @@ st.markdown(
     <section class="ss-ai-hero">
       <div class="ss-ai-orb" aria-hidden="true">✦</div>
       <div class="ss-ai-copy">
-        <div class="ss-ai-eyebrow">SUNSTRIPE AI <span>•</span> LIVE WEB RESEARCH</div>
+        <div class="ss-ai-eyebrow">SUNSTRIPE AI <span>•</span> GROQ + LIVE WEB RESEARCH</div>
         <div class="ss-ai-title">Your energy intelligence copilot</div>
         <div class="ss-ai-description">Tell me what you’re working on. I’ll help you explore sites, grid access, power markets and renewable opportunities.</div>
         <div class="ss-ai-tags"><span>☀️ Solar</span><span>🌬️ Wind</span><span>🔋 BESS</span><span>⚡ Grid &amp; nodal</span></div>
