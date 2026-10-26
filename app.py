@@ -3271,9 +3271,14 @@ def _parse_mcp_json(response):
 def _lookup_land_parcel(lat, lon, api_key):
     """Check free coverage first, then request parcel and assessor fields via Parceled GraphQL."""
     base_url = "https://parceled.ai/api/v1"
+    clean_api_key = str(api_key or "").strip().strip("\\\"'")
+    # Parceled deployments/documentation may accept either Bearer authorization
+    # or the API-key header. Send both with the same key; never log the key.
     headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
+        "Authorization": f"Bearer {clean_api_key}",
+        "x-api-key": clean_api_key,
         "Accept": "application/json",
+        "Content-Type": "application/json",
         "User-Agent": "SunstripeSelect/1.0",
     }
 
@@ -3346,7 +3351,14 @@ def _lookup_land_parcel(lat, lon, api_key):
             raise RuntimeError("Parceled returned an unexpected response format.")
         if payload.get("errors"):
             messages = [str(item.get("message", "GraphQL request failed")) for item in payload["errors"] if isinstance(item, dict)]
-            raise RuntimeError("Parceled lookup error: " + "; ".join(messages[:2]))
+            combined_message = "; ".join(messages[:2])
+            if any(token in combined_message.lower() for token in ("not authenticated", "unauthorized", "unauthenticated")):
+                raise RuntimeError(
+                    "Parceled authentication failed. Confirm the current Parceled API key in "
+                    "Streamlit Secrets under PARCELED_API_KEY, then verify with Parceled that "
+                    "the key is enabled for this GraphQL endpoint."
+                )
+            raise RuntimeError("Parceled lookup error: " + combined_message)
         payload.setdefault("availability", availability)
         return payload
 
