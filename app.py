@@ -1781,9 +1781,11 @@ Location and Site Intelligence for Renewable Energy and Large Loads
 # ============================================================
 
 def _sunstripe_ai_answer(chat_messages):
-    """Answer with Groq chat completions and built-in browser search."""
+    """Answer with Groq; retry transient server errors and fall back gracefully."""
+    import time
+
     api_key = ""
-    model = "openai/gpt-oss-120b"
+    model = "openai/gpt-oss-20b"  # Lighter default; supports Groq browser search.
     try:
         api_key = str(st.secrets.get("GROQ_API_KEY", "")).strip().strip("\"'")
         model = str(st.secrets.get("GROQ_MODEL", model)).strip() or model
@@ -1792,15 +1794,15 @@ def _sunstripe_ai_answer(chat_messages):
     if not api_key:
         api_key = os.getenv("GROQ_API_KEY", "").strip().strip("\"'")
     if not model:
-        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() or "openai/gpt-oss-120b"
+        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
     if not api_key:
         raise RuntimeError(
             "Sunstripe AI needs a Groq API key. Create one at https://console.groq.com/keys, "
-            "then add GROQ_API_KEY to Streamlit Cloud → Settings → Secrets. Groq's free tier "
-            "has usage limits; no OpenAI key or OpenAI credits are required."
+            "then add GROQ_API_KEY to Streamlit Cloud → Settings → Secrets. Groq free-tier "
+            "usage limits apply; no OpenAI key or OpenAI credits are required."
         )
 
-    instructions = """You are Sunstripe SELECT AI, an analyst copilot for utility-scale solar, wind, battery energy storage systems (BESS), large loads and US power markets. Help users with site screening, land, permitting, transmission, interconnection, nodal/LMP analysis, project competitors, and market/regulatory research. Use the enabled browser search to verify current facts, regulations, prices, project status, and recent news. Prefer primary sources such as ISO/RTOs, FERC, NERC, EIA, DOE, state agencies and official project filings. Clearly distinguish sourced facts from estimates and assumptions. Never invent live prices, grid capacity, parcel facts, or project status. State the date context when relevant and include source URLs/citations when available. Keep answers practical, structured and concise; ask one focused follow-up only when essential. The app's local charts or sample datasets are not live market data unless explicitly connected to a live source."""
+    instructions = """You are Sunstripe SELECT AI, an analyst copilot for utility-scale solar, wind, battery energy storage systems (BESS), large loads and US power markets. Help users with site screening, land, permitting, transmission, interconnection, nodal/LMP analysis, project competitors, and market/regulatory research. Use browser search when enabled to verify current facts, regulations, prices, project status, and recent news. Prefer primary sources such as ISO/RTOs, FERC, NERC, EIA, DOE, state agencies and official project filings. Clearly distinguish sourced facts from estimates and assumptions. Never invent live prices, grid capacity, parcel facts, or project status. State the date context when relevant and include source URLs/citations when available. Keep answers practical, structured and concise; ask one focused follow-up only when essential. The app's local charts or sample datasets are not live market data unless explicitly connected to a live source."""
     messages = [{"role": "system", "content": instructions}]
     for item in chat_messages[-12:]:
         role = item.get("role", "user")
@@ -1810,20 +1812,60 @@ def _sunstripe_ai_answer(chat_messages):
         if content:
             messages.append({"role": role, "content": content})
 
-    # GPT-OSS supports Groq's built-in browser search for current information.
-    response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
+    endpoint = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    def _post(model_id, use_browser_search=True):
+        body = {
+            "model": model_id,
             "messages": messages,
-            "tools": [{"type": "browser_search"}],
-            "tool_choice": "required",
             "temperature": 0.2,
-            "max_completion_tokens": 4096,
-        },
-        timeout=120,
-    )
+            "max_completion_tokens": 2048,
+        }
+        if use_browser_search:
+            body["tools"] = [{"type": "browser_search"}]
+            body["tool_choice"] = "required"
+        return requests.post(endpoint, headers=headers, json=body, timeout=120)
+
+    # Browser search is enabled first. Retry transient 5xx errors, then try a
+    # second supported model. If Groq's search service is temporarily unhealthy,
+    # fall back to ordinary chat rather than making the entire chatbox unusable.
+    attempts = []
+    preferred_models = list(dict.fromkeys([model, "openai/gpt-oss-20b", "openai/gpt-oss-120b"]))
+    response = None
+    used_model = model
+    for model_id in preferred_models:
+        used_model = model_id
+        for attempt in range(2):
+            try:
+                response = _post(model_id, use_browser_search=True)
+            except requests.RequestException as exc:
+                attempts.append(f"{model_id}: connection issue ({type(exc).__name__})")
+                response = None
+                break
+            if response.status_code < 500:
+                break
+            try:
+                err_payload = response.json()
+                err_detail = err_payload.get("error", {}).get("message", response.text[:250])
+            except (ValueError, AttributeError):
+                err_detail = response.text[:250]
+            attempts.append(f"{model_id}: HTTP {response.status_code} — {str(err_detail)[:250]}")
+            if attempt == 0:
+                time.sleep(1.2)
+        if response is not None and response.status_code < 500:
+            break
+
+    # If browser search is the failing service, use standard text generation as
+    # a safe fallback; make clear in the response that live search did not run.
+    live_search_failed = response is None or response.status_code >= 500
+    if live_search_failed:
+        used_model = "openai/gpt-oss-20b"
+        try:
+            response = _post(used_model, use_browser_search=False)
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Groq could not be reached ({type(exc).__name__}). Please retry shortly.") from exc
+
     if response.status_code >= 400:
         try:
             body = response.json()
@@ -1832,8 +1874,15 @@ def _sunstripe_ai_answer(chat_messages):
             detail = response.text[:500]
         if response.status_code == 401:
             raise RuntimeError("Groq rejected the API key. Check GROQ_API_KEY in Streamlit Secrets.")
+        if response.status_code == 403:
+            raise RuntimeError(f"Groq denied this request (403): {detail}. Check model access and account limits.")
         if response.status_code == 429:
-            raise RuntimeError("Groq's free-tier rate limit was reached. Wait a little and try again; no automatic charge will be made.")
+            raise RuntimeError("Groq's free-tier rate limit or quota was reached. Wait for the limit to reset and try again.")
+        if response.status_code >= 500:
+            raise RuntimeError(
+                "Groq is returning a server error even after retrying. This is likely a temporary provider-side issue. "
+                f"Latest detail: {str(detail)[:300]}"
+            )
         raise RuntimeError(f"Groq API error ({response.status_code}): {detail}")
 
     payload = response.json()
@@ -1843,9 +1892,9 @@ def _sunstripe_ai_answer(chat_messages):
         answer = str(choices[0].get("message", {}).get("content") or "").strip()
     if not answer:
         raise RuntimeError("Groq returned no text. Please try again.")
+    if live_search_failed:
+        answer = "**Live web search is temporarily unavailable**, so this answer is based on the model's existing knowledge and may not reflect current conditions.\n\n" + answer
 
-    # Groq browser-search citations are commonly included inline in the answer.
-    # Also expose any explicit URLs returned by the model as clickable source links.
     import re
     urls = re.findall(r"https?://[^\s)\]}>]+", answer)
     sources = []
