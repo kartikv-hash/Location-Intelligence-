@@ -1790,12 +1790,12 @@ st.markdown("""
         Know Where To Build
     </div>
     <div class="navrow">
-        <span class="navitem active">SITE INTELLIGENCE</span>
-        <span class="navitem">INTERCONNECTION</span>
-        <span class="navitem">GRID &amp; NODAL</span>
-        <span class="navitem">NEIGHBORHOOD</span>
-        <span class="navitem">ALTERNATIVES</span>
-        <span class="navitem">LAND &amp; REAL ESTATE</span>
+        <span class="navitem active">S · SITE INTELLIGENCE</span>
+        <span class="navitem">I · INTERCONNECTION OPPORTUNITIES</span>
+        <span class="navitem">G · GRID &amp; NODAL INSIGHTS</span>
+        <span class="navitem">N · NEIGHBORHOOD &amp; COMMUNITY</span>
+        <span class="navitem">A · ALTERNATIVES &amp; COMPETITORS</span>
+        <span class="navitem">L · LAND &amp; REAL ESTATE</span>
     </div>
 </div>
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
@@ -2926,19 +2926,31 @@ def render_siteiq():
 # feature set permits. SiteIQ includes the site/community screening tools;
 # Transmission network covers interconnection/grid visibility; asset and
 # project views support alternatives/competitor review. Land & Real Estate is last.
-tab_siteiq, tab_transmission_map, tab_asset_map, tab_register, tab_details, tab_analytics, tab_method, tab_land_parcel = st.tabs([
-    "SiteIQ",
-    "Transmission network",
-    "Renewable assets",
-    "Project register",
-    "Project details",
-    "Technology analytics",
-    "Data & limitations",
-    "Land & Real Estate",
+tab_siteiq, tab_interconnection, tab_grid, tab_neighborhood, tab_alternatives, tab_land_parcel = st.tabs([
+    "S — Site Intelligence",
+    "I — Interconnection Opportunities",
+    "G — Grid & Nodal Positioning Insights",
+    "N — Neighborhood & Community Sentiments",
+    "A — Alternatives & Competitor Landscape",
+    "L — Land & Real Estate",
 ])
 
 with tab_siteiq:
     render_siteiq()
+
+
+def _read_signal_table(upload):
+    """Read an uploaded CSV/Excel evidence file without forcing asset-register columns onto it."""
+    check_upload_size(upload)
+    filename = str(getattr(upload, "name", "")).lower()
+    content = upload.getvalue() if hasattr(upload, "getvalue") else upload.read()
+    if filename.endswith(".csv"):
+        return pd.read_csv(io.BytesIO(content))
+    if filename.endswith(".xlsx"):
+        return pd.read_excel(io.BytesIO(content), engine="openpyxl")
+    if filename.endswith(".xls"):
+        return pd.read_excel(io.BytesIO(content), engine="xlrd")
+    raise ValueError("Use a CSV, XLSX or XLS file.")
 
 
 def fit_map_view(latitudes, longitudes, width=1350, height=700, zoom_padding=0.45):
@@ -2982,16 +2994,38 @@ def fit_map_view(latitudes, longitudes, width=1350, height=700, zoom_padding=0.4
     return center, zoom
 
 
-with tab_asset_map:
+with tab_alternatives:
     st.markdown(
-        '<div class="section-title">Geographic asset intelligence</div>',
+        '<div class="section-title">A — Alternatives & Competitor Landscape</div>',
         unsafe_allow_html=True,
+    )
+    st.markdown(
+        "Compare mapped existing and proposed renewable assets around a candidate site, "
+        "and review alternative assets by technology, location and reported capacity."
+    )
+    st.caption(
+        f"Current technology selection: {technology_choice}. Counts below represent source records; "
+        "one development project can have multiple generator records."
+    )
+
+    alt_count = len(filtered)
+    alt_capacity = pd.to_numeric(filtered["nameplate_capacity_mw"], errors="coerce").sum(min_count=1)
+    alt_bess_energy = pd.to_numeric(filtered["energy_capacity_mwh"], errors="coerce").sum(min_count=1)
+    alt_k1, alt_k2, alt_k3 = st.columns(3)
+    alt_k1.metric("Matching asset records", f"{alt_count:,}")
+    alt_k2.metric(
+        "Reported nameplate capacity",
+        f"{alt_capacity:,.0f} MW" if pd.notna(alt_capacity) else "Not reported",
+    )
+    alt_k3.metric(
+        "Reported BESS energy capacity",
+        f"{alt_bess_energy:,.0f} MWh" if pd.notna(alt_bess_energy) else "Not reported",
     )
 
     st.markdown("### Renewable asset map")
     st.caption(
-        f"Current technology selection: {technology_choice}. "
-        "This map shows renewable assets only. Open the Transmission network tab for a separate full-grid map."
+        "Use the technology selector above the workspace to view all technologies or focus on Solar, Wind or BESS. "
+        "The transmission network is available in G — Grid & Nodal Positioning Insights."
     )
 
     if transmission_load_errors:
@@ -3007,6 +3041,52 @@ with tab_asset_map:
         map_data["latitude"].between(-90, 90)
         & map_data["longitude"].between(-180, 180)
     ]
+
+    selected_site_lat = st.session_state.get("sel_lat")
+    selected_site_lon = st.session_state.get("sel_lon")
+    if selected_site_lat is not None and selected_site_lon is not None and not map_data.empty:
+        # Great-circle distance is appropriate for shortlist screening, not surveying.
+        lat1 = np.radians(float(selected_site_lat))
+        lon1 = np.radians(float(selected_site_lon))
+        lat2 = np.radians(map_data["latitude"].astype(float).to_numpy())
+        lon2 = np.radians(map_data["longitude"].astype(float).to_numpy())
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        haversine = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+        map_data["Distance from selected site (mi)"] = 3958.8 * 2 * np.arcsin(np.sqrt(np.clip(haversine, 0, 1)))
+        radius_mi = st.select_slider(
+            "Nearby asset search radius",
+            options=[10, 25, 50, 100, 200],
+            value=50,
+            format_func=lambda value: f"{value} miles",
+            key="signal_alternatives_radius",
+        )
+        nearby_assets = map_data[map_data["Distance from selected site (mi)"] <= radius_mi].copy()
+        nearby_assets = nearby_assets.sort_values("Distance from selected site (mi)").head(100)
+        st.markdown("### Nearby assets for comparison")
+        st.caption(
+            f"Selected SiteIQ point: {float(selected_site_lat):.5f}, {float(selected_site_lon):.5f}. "
+            "Distances are straight-line estimates and do not represent electrical distance or interconnection feasibility."
+        )
+        if nearby_assets.empty:
+            st.info(f"No matching asset records with valid coordinates were found within {radius_mi} miles.")
+        else:
+            nearby_cols = [
+                col for col in [
+                    "plant_name", "technology_display", "state", "county", "entity_name",
+                    "nameplate_capacity_mw", "energy_capacity_mwh", "status",
+                    "Distance from selected site (mi)",
+                ] if col in nearby_assets.columns
+            ]
+            nearby_display = nearby_assets[nearby_cols].rename(columns={
+                "plant_name": "Asset", "technology_display": "Technology", "state": "State",
+                "county": "County", "entity_name": "Owner / entity",
+                "nameplate_capacity_mw": "Capacity (MW)", "energy_capacity_mwh": "Energy (MWh)",
+                "status": "Status",
+            })
+            st.dataframe(nearby_display, use_container_width=True, hide_index=True, height=300)
+    else:
+        st.info("Select a candidate point in S — Site Intelligence to see nearby alternative and competing asset records.")
 
     if not map_data.empty:
         asset_center, asset_zoom = fit_map_view(
@@ -3069,16 +3149,70 @@ with tab_asset_map:
 # DEDICATED TRANSMISSION NETWORK MAP
 # ============================================================
 
-with tab_transmission_map:
+with tab_grid:
     st.markdown(
-        '<div class="section-title">Transmission network</div>',
+        '<div class="section-title">G — Grid & Nodal Positioning Insights</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        "Explore the U.S. transmission grid using the interactive map. Pan and zoom, "
-        "use the map controls, and select a transmission line to view its available attributes."
+        "Explore transmission infrastructure and analyze historical nodal prices. "
+        "Local transmission files are colored by their reported voltage; uploaded LMP data is analyzed as supplied."
     )
 
+    # Render grid geometry supplied in the repository or uploaded in the sidebar.
+    if transmission_groups or not grid_points.empty:
+        grid_fig = go.Figure()
+        grid_traces, _grid_color_map = transmission_line_traces(transmission_groups)
+        for _trace in grid_traces:
+            grid_fig.add_trace(_trace)
+
+        if not grid_points.empty:
+            _valid_grid_points = grid_points.copy()
+            _valid_grid_points["latitude"] = pd.to_numeric(_valid_grid_points["latitude"], errors="coerce")
+            _valid_grid_points["longitude"] = pd.to_numeric(_valid_grid_points["longitude"], errors="coerce")
+            _valid_grid_points = _valid_grid_points.dropna(subset=["latitude", "longitude"])
+            if not _valid_grid_points.empty:
+                grid_fig.add_trace(
+                    MAP_TRACE_CLASS(
+                        lon=_valid_grid_points["longitude"],
+                        lat=_valid_grid_points["latitude"],
+                        mode="markers",
+                        marker=dict(size=8, color=RED, opacity=0.9),
+                        text=_valid_grid_points["name"].astype(str),
+                        name="Grid points / substations",
+                        hovertemplate="<b>%{text}</b><br>Grid point<extra></extra>",
+                    )
+                )
+
+        _grid_lats = []
+        _grid_lons = []
+        for _segments in transmission_groups.values():
+            for _lons, _lats in _segments:
+                _grid_lons.extend(_lons)
+                _grid_lats.extend(_lats)
+        if not grid_points.empty:
+            _grid_lats.extend(pd.to_numeric(grid_points["latitude"], errors="coerce").dropna().tolist())
+            _grid_lons.extend(pd.to_numeric(grid_points["longitude"], errors="coerce").dropna().tolist())
+        _grid_center, _grid_zoom = fit_map_view(_grid_lats, _grid_lons, height=560, zoom_padding=0.6)
+        grid_fig.update_layout(
+            **{MAP_LAYOUT_KEY: dict(style="open-street-map", center=_grid_center, zoom=_grid_zoom)},
+            height=560,
+            margin=dict(t=15, b=10, l=10, r=10),
+            paper_bgcolor=BG,
+            plot_bgcolor=BG,
+            font=dict(family=FONT, size=12, color=BLACK),
+            legend=dict(bgcolor="rgba(251,249,247,0.92)", title="Voltage / layer"),
+        )
+        st.plotly_chart(grid_fig, use_container_width=True, key="signal_transmission_grid_map")
+        st.caption(
+            f"Loaded {transmission_segment_count:,} line segment(s) and {len(grid_points):,} point record(s) "
+            f"from: {', '.join(transmission_source_names) if transmission_source_names else 'uploaded/repository grid files'}. "
+            "Displayed geometries and voltage labels reflect the supplied dataset; they do not establish available transfer capacity."
+        )
+    else:
+        st.info("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the external grid map below remains available.")
+
+    st.markdown("### Interactive U.S. transmission map")
     interactive_grid_map_url = (
         "https://www.arcgis.com/apps/mapviewer/index.html"
         "?layers=d77284d1a97a426eaf960bab4764999c"
@@ -3102,449 +3236,293 @@ with tab_transmission_map:
         "If the map is blocked by browser or organization policy, open it in a new tab."
     )
 
-# ============================================================
-# PROJECT REGISTER / DETAILS / ANALYTICS / DATA SOURCES
-# ============================================================
+    st.markdown('<div class="section-title">Historical nodal price intelligence</div>', unsafe_allow_html=True)
+    st.caption(
+        "Upload actual day-ahead or real-time LMP data from an ISO/RTO or another authorized source. "
+        "This workspace does not invent prices or claim a live market connection."
+    )
+    lmp_upload = st.file_uploader(
+        "Upload nodal / LMP history (CSV or Excel)",
+        type=["csv", "xlsx", "xls"],
+        key="signal_lmp_history_upload",
+        help="Include a timestamp/interval column and a numeric LMP or price column. A node column is optional.",
+    )
+    if lmp_upload is not None:
+        try:
+            lmp_data = _read_signal_table(lmp_upload)
+            if lmp_data.empty:
+                st.warning("The uploaded market-price file is empty.")
+            else:
+                _lmp_date_candidates = [c for c in lmp_data.columns if any(k in column_key(c) for k in ["datetime", "timestamp", "intervalending", "settlementdate", "date", "time"])]
+                _lmp_price_candidates = [c for c in lmp_data.columns if any(k in column_key(c) for k in ["lmp", "price", "smp", "settlementpointprice"])]
+                _lmp_date_default = _lmp_date_candidates[0] if _lmp_date_candidates else lmp_data.columns[0]
+                _lmp_date_col = st.selectbox("Timestamp / date column", list(lmp_data.columns), index=list(lmp_data.columns).index(_lmp_date_default), key="signal_lmp_date_col")
+                _lmp_price_default = _lmp_price_candidates[0] if _lmp_price_candidates else (lmp_data.columns[1] if len(lmp_data.columns) > 1 else lmp_data.columns[0])
+                _lmp_price_col = st.selectbox("LMP / price column", list(lmp_data.columns), index=list(lmp_data.columns).index(_lmp_price_default), key="signal_lmp_price_col")
+                _lmp_node_candidates = [c for c in lmp_data.columns if any(k in column_key(c) for k in ["settlementpoint", "pricingnode", "pnode", "node", "location", "hub", "bus"])]
+                _lmp_work = lmp_data.copy()
+                _lmp_work["_timestamp"] = pd.to_datetime(_lmp_work[_lmp_date_col], errors="coerce", utc=True)
+                _lmp_work["_price"] = pd.to_numeric(_lmp_work[_lmp_price_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                _lmp_work = _lmp_work.dropna(subset=["_timestamp", "_price"]).sort_values("_timestamp")
+                if _lmp_work.empty:
+                    st.warning("No valid timestamp and numeric price records were found. Check your selected columns and file format.")
+                else:
+                    if _lmp_node_candidates:
+                        _lmp_node_col = st.selectbox("Node / location filter (optional)", ["All nodes"] + _lmp_node_candidates, key="signal_lmp_node_col")
+                        if _lmp_node_col != "All nodes":
+                            _lmp_node_values = sorted(_lmp_work[_lmp_node_col].dropna().astype(str).unique().tolist())
+                            if _lmp_node_values:
+                                _selected_lmp_node = st.selectbox("Select node", _lmp_node_values[:2000], key="signal_lmp_node_value")
+                                _lmp_work = _lmp_work[_lmp_work[_lmp_node_col].astype(str) == _selected_lmp_node]
+                    if not _lmp_work.empty:
+                        _lm1, _lm2, _lm3, _lm4, _lm5, _lm6 = st.columns(6)
+                        _lm1.metric("Price intervals", f"{len(_lmp_work):,}")
+                        _lm2.metric("Average LMP", f"${_lmp_work['_price'].mean():,.2f}/MWh")
+                        _lm3.metric("Maximum LMP", f"${_lmp_work['_price'].max():,.2f}/MWh")
+                        _lm4.metric("Minimum LMP", f"${_lmp_work['_price'].min():,.2f}/MWh")
+                        _lm5.metric("Negative-price intervals", f"{(_lmp_work['_price'] < 0).sum():,}")
+                        _lm6.metric("Price volatility (σ)", f"${_lmp_work['_price'].std():,.2f}/MWh" if len(_lmp_work) > 1 else "Not enough data")
+                        _lmp_fig = px.line(_lmp_work, x="_timestamp", y="_price", title="Uploaded historical LMP", labels={"_timestamp": "Timestamp (UTC)", "_price": "LMP ($/MWh)"})
+                        _lmp_fig = style_chart(_lmp_fig)
+                        st.plotly_chart(_lmp_fig, use_container_width=True, key="signal_lmp_uploaded_chart")
+                        st.caption("Statistics describe only the uploaded records and selected node. They are historical observations, not a forecast or a BESS revenue guarantee.")
+                        st.download_button("Download cleaned LMP records", data=_lmp_work[['_timestamp', '_price']].rename(columns={'_timestamp': 'timestamp_utc', '_price': 'lmp_usd_per_mwh'}).to_csv(index=False).encode('utf-8'), file_name="sunstripe_cleaned_lmp.csv", mime="text/csv", key="signal_lmp_download")
+
+                        _component_cols = [c for c in lmp_data.columns if c not in {_lmp_date_col, _lmp_price_col} and any(k in column_key(c) for k in ["congestion", "losscomponent", "congestioncomponent", "mcc", "mcl"])]
+                        if _component_cols:
+                            _component_data = _lmp_work[["_timestamp"] + _component_cols].copy()
+                            for _component_col in _component_cols:
+                                _component_data[_component_col] = pd.to_numeric(_component_data[_component_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                            _component_long = _component_data.melt(id_vars=["_timestamp"], value_vars=_component_cols, var_name="Component", value_name="$/MWh").dropna(subset=["$/MWh"])
+                            if not _component_long.empty:
+                                st.markdown("### Congestion and loss components")
+                                _component_fig = px.line(_component_long, x="_timestamp", y="$/MWh", color="Component", title="Uploaded congestion / loss components")
+                                _component_fig = style_chart(_component_fig)
+                                st.plotly_chart(_component_fig, use_container_width=True, key="signal_lmp_components_chart")
+                        else:
+                            st.caption("Separate congestion/loss analysis will appear when the uploaded source includes component columns such as congestion or loss components / MCC / MCL.")
+
+                        st.markdown("### BESS arbitrage spread benchmark")
+                        st.caption("A simple daily price-spread screen using the uploaded prices. It is not optimized dispatch and excludes degradation, fees, charging constraints, outages, ancillary services and network limits.")
+                        _bess_c1, _bess_c2, _bess_c3 = st.columns(3)
+                        _bess_power_mw = _bess_c1.number_input("BESS power (MW)", min_value=1.0, max_value=2000.0, value=100.0, step=10.0, key="signal_bess_power_mw")
+                        _bess_duration_h = _bess_c2.selectbox("Storage duration", [2, 4], index=1, format_func=lambda value: f"{value}-hour", key="signal_bess_duration_hours")
+                        _bess_rte_pct = _bess_c3.slider("Round-trip efficiency (%)", min_value=60, max_value=100, value=88, step=1, key="signal_bess_rte_pct")
+                        _unique_times = _lmp_work["_timestamp"].drop_duplicates().sort_values()
+                        _interval_hours_series = _unique_times.diff().dt.total_seconds().div(3600)
+                        _valid_intervals = _interval_hours_series[(_interval_hours_series > 0) & (_interval_hours_series <= 2)]
+                        _interval_hours = float(_valid_intervals.median()) if not _valid_intervals.empty else 1.0
+                        _intervals_per_leg = max(1, int(np.ceil(float(_bess_duration_h) / _interval_hours)))
+                        _daily_spread_results = []
+                        for _day, _day_prices in _lmp_work.groupby(_lmp_work["_timestamp"].dt.date):
+                            _day_prices = _day_prices[["_timestamp", "_price"]].drop_duplicates(subset=["_timestamp"]).sort_values("_timestamp")
+                            if len(_day_prices) < 2 * _intervals_per_leg:
+                                continue
+                            _ordered_prices = _day_prices.sort_values("_price")
+                            _charge_prices = _ordered_prices.head(_intervals_per_leg)["_price"]
+                            _discharge_prices = _ordered_prices.tail(_intervals_per_leg)["_price"]
+                            _margin = float(_bess_power_mw * _interval_hours * ((_bess_rte_pct / 100.0) * _discharge_prices.sum() - _charge_prices.sum()))
+                            _daily_spread_results.append({"Date": pd.Timestamp(_day), "Gross spread margin ($)": _margin})
+                        if _daily_spread_results:
+                            _spread_df = pd.DataFrame(_daily_spread_results)
+                            _bs1, _bs2, _bs3 = st.columns(3)
+                            _bs1.metric("Days analyzed", f"{len(_spread_df):,}")
+                            _bs2.metric("Mean daily spread margin", f"${_spread_df['Gross spread margin ($)'].mean():,.0f}")
+                            _bs3.metric("Total observed-period spread margin", f"${_spread_df['Gross spread margin ($)'].sum():,.0f}")
+                            _spread_fig = px.bar(_spread_df, x="Date", y="Gross spread margin ($)", title=f"Daily spread margin benchmark · {int(_bess_duration_h)}h / {_bess_power_mw:g} MW")
+                            _spread_fig = style_chart(_spread_fig)
+                            st.plotly_chart(_spread_fig, use_container_width=True, key="signal_bess_spread_benchmark_chart")
+                            st.caption("The calculation selects the lowest and highest price intervals within each day, so it is an indicative spread screen rather than a feasible dispatch schedule or forecast revenue. Check the source's time interval and price units before using the output.")
+                        else:
+                            st.info("There are not enough distinct price intervals per day to evaluate the selected storage duration.")
+        except Exception as exc:
+            st.error(f"Could not read the uploaded LMP file: {exc}")
+
+    st.markdown('<div class="section-title">Renewable curtailment intelligence</div>', unsafe_allow_html=True)
+    st.caption("Upload historical wind/solar generation and curtailment records to quantify curtailed output and identify periods worth further BESS assessment. This does not infer curtailment when it is absent from the source.")
+    curtailment_upload = st.file_uploader(
+        "Upload curtailment / generation history (CSV or Excel)",
+        type=["csv", "xlsx", "xls"],
+        key="signal_curtailment_upload",
+        help="Include timestamp plus a curtailment MW or MWh column. Actual and potential generation columns are useful for context.",
+    )
+    if curtailment_upload is not None:
+        try:
+            curtailment_data = _read_signal_table(curtailment_upload)
+            if curtailment_data.empty:
+                st.warning("The uploaded curtailment file is empty.")
+            else:
+                _curt_date_candidates = [c for c in curtailment_data.columns if any(k in column_key(c) for k in ["datetime", "timestamp", "intervalending", "date", "time", "period"])]
+                _curt_date_default = _curt_date_candidates[0] if _curt_date_candidates else curtailment_data.columns[0]
+                _curt_date_col = st.selectbox("Curtailment timestamp / date column", list(curtailment_data.columns), index=list(curtailment_data.columns).index(_curt_date_default), key="signal_curtailment_date_col")
+                _curt_numeric_candidates = []
+                for _curt_col in curtailment_data.columns:
+                    if _curt_col == _curt_date_col:
+                        continue
+                    _curt_numeric_values = pd.to_numeric(curtailment_data[_curt_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                    if _curt_numeric_values.notna().any():
+                        _curt_numeric_candidates.append(_curt_col)
+                _curt_named_candidates = [c for c in _curt_numeric_candidates if any(k in column_key(c) for k in ["curtail", "spill", "constrainedenergy", "lostgeneration"])]
+                if not _curt_numeric_candidates:
+                    st.warning("No numeric curtailment or generation column was detected in the uploaded file.")
+                else:
+                    _curt_value_default = _curt_named_candidates[0] if _curt_named_candidates else _curt_numeric_candidates[0]
+                    _curt_value_col = st.selectbox("Curtailment value column", _curt_numeric_candidates, index=_curt_numeric_candidates.index(_curt_value_default), key="signal_curtailment_value_col")
+                    _curt_work = curtailment_data.copy()
+                    _curt_work["_timestamp"] = pd.to_datetime(_curt_work[_curt_date_col], errors="coerce", utc=True)
+                    _curt_work["_curtailed_value"] = pd.to_numeric(_curt_work[_curt_value_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                    _curt_work = _curt_work.dropna(subset=["_timestamp", "_curtailed_value"]).sort_values("_timestamp")
+                    if _curt_work.empty:
+                        st.warning("No valid dated curtailment values were found. Check the selected columns.")
+                    else:
+                        _cu1, _cu2, _cu3 = st.columns(3)
+                        _cu1.metric("Valid records", f"{len(_curt_work):,}")
+                        _cu2.metric("Sum of reported values", f"{_curt_work['_curtailed_value'].sum():,.2f}")
+                        _cu3.metric("Intervals with positive values", f"{(_curt_work['_curtailed_value'] > 0).sum():,}")
+                        _curt_fig = px.line(_curt_work, x="_timestamp", y="_curtailed_value", title=f"Uploaded curtailment series · {_curt_value_col}", labels={"_timestamp": "Timestamp (UTC)", "_curtailed_value": str(_curt_value_col)})
+                        _curt_fig = style_chart(_curt_fig)
+                        st.plotly_chart(_curt_fig, use_container_width=True, key="signal_curtailment_history_chart")
+                        st.caption("The sum retains the unit of the selected source column. Confirm whether it represents MW, MWh or another measure and whether values are actual curtailment before using it for storage sizing.")
+                        st.download_button("Download cleaned curtailment records", data=_curt_work[["_timestamp", "_curtailed_value"]].rename(columns={"_timestamp": "timestamp_utc", "_curtailed_value": "curtailment_value"}).to_csv(index=False).encode("utf-8"), file_name="sunstripe_cleaned_curtailment.csv", mime="text/csv", key="signal_curtailment_download")
+        except Exception as exc:
+            st.error(f"Could not read the uploaded curtailment file: {exc}")
+
 
 # ============================================================
-# PROJECT REGISTER
+# SIGNAL I — INTERCONNECTION OPPORTUNITIES
 # ============================================================
-
-with tab_register:
+with tab_interconnection:
+    st.markdown('<div class="section-title">I — Interconnection Opportunities</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-title">Project and generator register</div>',
-        unsafe_allow_html=True,
+        "Review queue and study records, points of interconnection, requested capacity and known upgrade information. "
+        "Nearby lines or substations alone do not confirm interconnection availability."
     )
 
-    search_text = st.text_input(
-        "Search project records",
-        placeholder="Plant name, owner, state, county or generator ID",
-    )
-
-    searchable_columns = [
-        "plant_name",
-        "state",
-        "county",
-        "entity_name",
-        "technology_group",
-        "generator_id",
-        "plant_code",
-        "status",
-        "energy_source_code",
-        "prime_mover_code",
-    ]
-
-    searchable_columns = [
-        c for c in searchable_columns if c in filtered.columns
-    ]
-
-    results = filtered.copy()
-
-    if search_text.strip() and searchable_columns:
-        matches = results[searchable_columns].apply(
-            lambda col: col.astype(str).str.contains(
-                search_text.strip(),
-                case=False,
-                na=False,
-                regex=False,
-            )
-        ).any(axis=1)
-
-        results = results[matches].copy()
-
-    display_columns = [
-        "plant_name",
-        "technology_display",
-        "entity_name",
-        "state",
-        "county",
-        "plant_code",
-        "generator_id",
-        "nameplate_capacity_mw",
-        "net_summer_capacity_mw",
-        "energy_capacity_mwh",
-        "status",
-        "operating_year",
-        "planned_operating_year",
-    ]
-
-    display_columns = [
-        c for c in display_columns if c in results.columns
-    ]
-
-    st.dataframe(
-        results[display_columns],
-        use_container_width=True,
-        hide_index=True,
-        height=450,
-    )
-
-    st.caption(f"{len(results):,} matching records.")
-
-    st.download_button(
-        "Download filtered project records",
-        data=results.to_csv(index=False).encode("utf-8"),
-        file_name="sunstripe_filtered_projects.csv",
-        mime="text/csv",
-    )
-
-
-# ============================================================
-# PROJECT DETAILS
-# ============================================================
-
-with tab_details:
-    st.markdown(
-        '<div class="section-title">Complete project information</div>',
-        unsafe_allow_html=True,
-    )
-
-    if filtered.empty:
-        st.info("No records match the current filters.")
+    _site_for_interconnection = st.session_state.get("site_data")
+    if _site_for_interconnection:
+        _ic1, _ic2, _ic3 = st.columns(3)
+        _ic1.metric("Screened transmission distance", f"{_site_for_interconnection.get('nearest_trans_dist_mi', 'Not available')} mi")
+        _ic2.metric("Screened substation distance", f"{_site_for_interconnection.get('nearest_sub_dist_mi', 'Not available')} mi")
+        _ic3.metric("Market label", str(_site_for_interconnection.get('wholesale_market', 'Not available')))
+        st.caption("The distance and market fields above are SiteIQ screening outputs, not a utility-confirmed point of interconnection or available capacity.")
     else:
-        options = filtered.copy()
+        st.info("Select a location in S — Site Intelligence to display its current screening context here.")
 
-        options["_display"] = (
-            options["plant_name"].fillna("Unnamed plant").astype(str)
-            + " | "
-            + options["state"].fillna("Unknown").astype(str)
-            + " | "
-            + options["technology_display"].astype(str)
-            + " | "
-            + options["nameplate_capacity_mw"].fillna(0).map(
-                lambda x: f"{x:,.2f} MW"
+    st.markdown("### Interconnection queue / study records")
+    st.caption("Upload an official ISO/RTO, utility or consultant queue export to review the records. Queue MW is requested project capacity, not available grid headroom.")
+    queue_upload = st.file_uploader(
+        "Upload queue or interconnection study file (CSV or Excel)",
+        type=["csv", "xlsx", "xls"],
+        key="signal_interconnection_queue_upload",
+    )
+    if queue_upload is not None:
+        try:
+            queue_data = _read_signal_table(queue_upload)
+            if queue_data.empty:
+                st.warning("The uploaded queue file is empty.")
+            else:
+                _queue_capacity_col = next((c for c in queue_data.columns if ("capacity" in column_key(c) and ("mw" in column_key(c) or "megawatt" in column_key(c))) or column_key(c) in {"mw", "requestedmw", "projectmw", "interconnectionmw"}), None)
+                _queue_status_col = next((c for c in queue_data.columns if any(k in column_key(c) for k in ["queuestatus", "projectstatus", "studyphase", "status"])), None)
+                _queue_poi_col = next((c for c in queue_data.columns if any(k in column_key(c) for k in ["poiname", "pointofinterconnection", "substation", "pnode", "interconnectionpoint", "poi"])), None)
+                _queue_state_col = next((c for c in queue_data.columns if column_key(c) in {"state", "statename", "projectstate"}), None)
+                _q1, _q2, _q3 = st.columns(3)
+                _q1.metric("Queue records", f"{len(queue_data):,}")
+                if _queue_capacity_col:
+                    _qcap = pd.to_numeric(queue_data[_queue_capacity_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                    _q2.metric("Reported requested capacity", f"{_qcap.sum(min_count=1):,.0f} MW" if _qcap.notna().any() else "Not reported")
+                else:
+                    _q2.metric("Reported requested capacity", "Column not identified")
+                _q3.metric("Distinct statuses", f"{queue_data[_queue_status_col].nunique(dropna=True):,}" if _queue_status_col else "Not identified")
+                _queue_filtered = queue_data.copy()
+                if _queue_status_col:
+                    _queue_status_values = sorted(_queue_filtered[_queue_status_col].dropna().astype(str).unique().tolist())
+                    _queue_selected_status = st.selectbox("Filter by queue / study status", ["All statuses"] + _queue_status_values, key="signal_queue_status_filter")
+                    if _queue_selected_status != "All statuses":
+                        _queue_filtered = _queue_filtered[_queue_filtered[_queue_status_col].astype(str) == _queue_selected_status]
+                if _queue_state_col:
+                    _queue_state_values = sorted(_queue_filtered[_queue_state_col].dropna().astype(str).unique().tolist())
+                    if len(_queue_state_values) > 1:
+                        _queue_selected_state = st.selectbox("Filter by state", ["All states"] + _queue_state_values, key="signal_queue_state_filter")
+                        if _queue_selected_state != "All states":
+                            _queue_filtered = _queue_filtered[_queue_filtered[_queue_state_col].astype(str) == _queue_selected_state]
+                if _queue_poi_col:
+                    st.caption(f"Detected point-of-interconnection / location field: {_queue_poi_col}")
+                st.dataframe(_queue_filtered, use_container_width=True, hide_index=True, height=400)
+                st.download_button("Download filtered interconnection records", data=_queue_filtered.to_csv(index=False).encode("utf-8"), file_name="sunstripe_interconnection_records.csv", mime="text/csv", key="signal_queue_download")
+                st.caption("The platform does not infer upgrade costs, study outcomes or available capacity when those fields are absent from the uploaded source.")
+        except Exception as exc:
+            st.error(f"Could not read the interconnection file: {exc}")
+    else:
+        st.info("No interconnection queue file is loaded. Upload a source export to analyze queue status, requested MW and reported point-of-interconnection fields.")
+        with st.expander("Official market and grid references"):
+            st.markdown(
+                "[ERCOT](https://www.ercot.com/)  ·  [CAISO](https://www.caiso.com/)  ·  "
+                "[MISO](https://www.misoenergy.org/)  ·  [PJM](https://www.pjm.com/)  ·  "
+                "[SPP](https://www.spp.org/)  ·  [ISO New England](https://www.iso-ne.com/)  ·  "
+                "[NYISO](https://www.nyiso.com/)"
             )
-            + " | "
-            + options["record_id"].astype(str)
-        )
 
-        label_to_id = dict(
-            zip(options["_display"], options["record_id"])
-        )
 
-        chosen = st.selectbox(
-            "Select a project or generator",
-            options["_display"].tolist(),
-        )
+# ============================================================
+# SIGNAL N — NEIGHBORHOOD & COMMUNITY SENTIMENTS
+# ============================================================
+with tab_neighborhood:
+    st.markdown('<div class="section-title">N — Neighborhood & Community Sentiments</div>', unsafe_allow_html=True)
+    st.markdown(
+        "Review community and permitting evidence that could affect development risk: zoning, permit status, "
+        "public hearings, documented objections, local ordinances and environmental-review records."
+    )
 
-        chosen_id = label_to_id[chosen]
-
-        project = filtered[
-            filtered["record_id"] == chosen_id
-        ].iloc[0]
-
-        st.markdown(f"### {project['plant_name']}")
-
-        d1, d2, d3, d4 = st.columns(4)
-
-        d1.metric("Technology", project["technology_display"])
-
-        mw = project["nameplate_capacity_mw"]
-        d2.metric(
-            "Nameplate capacity",
-            f"{mw:,.2f} MW" if pd.notna(mw) else "Not reported",
-        )
-
-        d3.metric("State", str(project.get("state", "Unknown")))
-        d4.metric("Status", str(project.get("status", "Not reported")))
-
-        key_fields = [
-            ("Plant name", "plant_name"),
-            ("Technology", "technology_group"),
-            ("Plant code", "plant_code"),
-            ("Generator ID", "generator_id"),
-            ("Owner / reporting entity", "entity_name"),
-            ("Entity ID", "entity_id"),
-            ("Producer type", "producer_type"),
-            ("Energy source code", "energy_source_code"),
-            ("Prime mover code", "prime_mover_code"),
-            ("Nameplate capacity (MW)", "nameplate_capacity_mw"),
-            ("Net summer capacity (MW)", "net_summer_capacity_mw"),
-            ("Energy capacity (MWh)", "energy_capacity_mwh"),
-            ("Status", "status"),
-            ("State", "state"),
-            ("County", "county"),
-            ("Latitude", "latitude"),
-            ("Longitude", "longitude"),
-            ("Operating year", "operating_year"),
-            ("Operating month", "operating_month"),
-            ("Planned operating year", "planned_operating_year"),
-            ("Planned operating month", "planned_operating_month"),
-            ("Source dataset", "source_dataset"),
-        ]
-
-        detail_rows = []
-
-        for label, field in key_fields:
-            value = project.get(field, None)
-
-            if value is None or pd.isna(value) or str(value).strip() == "":
-                value = "Not reported in this record"
-            elif field in ("latitude", "longitude"):
-                value = f"{float(value):.6f}"
-            elif field in (
-                "nameplate_capacity_mw",
-                "net_summer_capacity_mw",
-                "energy_capacity_mwh",
-            ):
-                value = f"{float(value):,.2f}"
-
-            detail_rows.append({
-                "Information": label,
-                "Value": str(value),
-            })
-
-        st.markdown(
-            '<div class="section-title">Key project information</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.dataframe(
-            pd.DataFrame(detail_rows),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.markdown(
-            '<div class="section-title">Complete source record</div>',
-            unsafe_allow_html=True,
-        )
-
-        raw_record = project.drop(
-            labels=["_display"], errors="ignore"
-        )
-
-        raw_details = pd.DataFrame({
-            "Field": raw_record.index.astype(str),
-            "Value": [
-                "Not reported" if pd.isna(value) else str(value)
-                for value in raw_record.values
-            ],
-        })
-
-        st.dataframe(
-            raw_details,
-            use_container_width=True,
-            hide_index=True,
-            height=500,
-        )
-
-        st.download_button(
-            "Download complete project record",
-            data=raw_record.to_frame().T.to_csv(index=False).encode("utf-8"),
-            file_name=f"sunstripe_project_{chosen_id}.csv",
-            mime="text/csv",
-        )
-
-        record_url = project.get("source_url", "")
-
-        if isinstance(record_url, str) and record_url.startswith("https://"):
-            st.markdown(f"[Open source workbook]({record_url})")
-        elif data_mode == "EIA live inventory":
-            st.markdown(f"[Open official EIA page]({EIA_PAGE})")
-
+    _site_for_community = st.session_state.get("site_data")
+    if _site_for_community:
+        st.markdown("### Current SiteIQ screening indicators")
         st.warning(
-            "This view shows the available fields from the selected dataset. "
-            "Parcel ownership, land valuation, permits, interconnection studies, "
-            "storage duration and project revenue may require separate sources."
+            "These inherited SiteIQ fields are preliminary model outputs and are not verified public records or measured community sentiment. "
+            "Use source-backed records below for diligence."
         )
+        _n1, _n2, _n3, _n4 = st.columns(4)
+        _n1.metric("Community indicator", str(_site_for_community.get("community_sentiment", "Not available")))
+        _n2.metric("Estimated permit count", str(_site_for_community.get("permits_needed", "Not available")))
+        _n3.metric("Species screening", str(_site_for_community.get("species_concerns", "Not available")))
+        _n4.metric("Flood-zone label", str(_site_for_community.get("flood_zone", "Not available")))
 
-
-# ============================================================
-# TECHNOLOGY ANALYTICS
-# ============================================================
-
-with tab_analytics:
-    st.markdown(
-        '<div class="section-title">Technology analytics</div>',
-        unsafe_allow_html=True,
+    st.markdown("### Public permits, zoning and community records")
+    st.caption("Upload public records or a maintained diligence tracker. Keep the original source and date fields in the file so findings can be traced.")
+    community_upload = st.file_uploader(
+        "Upload permit / zoning / hearing / community records (CSV or Excel)",
+        type=["csv", "xlsx", "xls"],
+        key="signal_community_records_upload",
     )
-
-    if filtered.empty:
-        st.info("No records available for the current filters.")
+    if community_upload is not None:
+        try:
+            community_data = _read_signal_table(community_upload)
+            if community_data.empty:
+                st.warning("The uploaded community / permit file is empty.")
+            else:
+                _community_status_col = next((c for c in community_data.columns if any(k in column_key(c) for k in ["permitstatus", "hearingstatus", "reviewstatus", "status", "decision"])), None)
+                _community_date_col = next((c for c in community_data.columns if any(k in column_key(c) for k in ["date", "datetime", "hearingdate", "filingdate", "updated"])), None)
+                _c1, _c2, _c3 = st.columns(3)
+                _c1.metric("Uploaded records", f"{len(community_data):,}")
+                _c2.metric("Status values", f"{community_data[_community_status_col].nunique(dropna=True):,}" if _community_status_col else "Not identified")
+                _c3.metric("Rows with dates", f"{pd.to_datetime(community_data[_community_date_col], errors='coerce').notna().sum():,}" if _community_date_col else "Date column not identified")
+                _community_search = st.text_input("Search records", placeholder="Jurisdiction, project, permit, issue or source", key="signal_community_search")
+                _community_filtered = community_data.copy()
+                if _community_search.strip():
+                    _community_match = _community_filtered.astype(str).apply(lambda col: col.str.contains(_community_search.strip(), case=False, na=False, regex=False)).any(axis=1)
+                    _community_filtered = _community_filtered[_community_match]
+                st.dataframe(_community_filtered, use_container_width=True, hide_index=True, height=400)
+                st.download_button("Download filtered community records", data=_community_filtered.to_csv(index=False).encode("utf-8"), file_name="sunstripe_community_records.csv", mime="text/csv", key="signal_community_download")
+        except Exception as exc:
+            st.error(f"Could not read the community / permit file: {exc}")
     else:
-        by_state = (
-            filtered.groupby("state", as_index=False)
-            ["nameplate_capacity_mw"].sum()
-            .sort_values("nameplate_capacity_mw", ascending=False)
-            .head(15)
+        st.info("No community or permit dataset is loaded. Upload source-backed records to enable record-level review; this panel will not invent sentiment or permitting outcomes.")
+
+    with st.expander("What to include in a development review"):
+        st.markdown(
+            "Zoning and land-use compatibility; county and state permits; public hearing dates and outcomes; "
+            "documented public comments; local ordinances and moratoria; environmental review; permit appeals; "
+            "and links to original agency or meeting records. Record the jurisdiction, publication date and source URL for each item."
         )
-
-        fig = px.bar(
-            by_state,
-            x="state",
-            y="nameplate_capacity_mw",
-            text="nameplate_capacity_mw",
-            title=f"{technology_choice}: capacity by state",
-            labels={
-                "state": "State",
-                "nameplate_capacity_mw": "Nameplate capacity (MW)",
-            },
-        )
-
-        fig.update_traces(
-            marker_color=RED,
-            texttemplate="%{text:,.0f}",
-            textposition="outside",
-            textfont=dict(family=FONT, size=11, color=BLACK),
-            cliponaxis=False,
-        )
-
-        fig = style_chart(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-        by_status = (
-            filtered.groupby("status", as_index=False)
-            .size()
-            .rename(columns={"size": "Generator records"})
-            .sort_values("Generator records", ascending=False)
-        )
-
-        fig2 = px.bar(
-            by_status,
-            x="status",
-            y="Generator records",
-            text="Generator records",
-            title=f"{technology_choice}: records by status",
-        )
-
-        fig2.update_traces(
-            marker_color=RED,
-            textposition="outside",
-            textfont=dict(family=FONT, size=11, color=BLACK),
-            cliponaxis=False,
-        )
-
-        fig2 = style_chart(fig2)
-        st.plotly_chart(fig2, use_container_width=True)
-
-
-# ============================================================
-# DATA SOURCES AND LIMITATIONS
-# ============================================================
-
-with tab_method:
-    st.markdown(
-        '<div class="section-title">Data sources and methodology</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("""
-    **Transmission grid color coding**
-
-    Transmission lines are colored by the kV value in the uploaded line dataset:
-    - **138 kV — orange**
-    - **240 kV — green**
-    - 69 kV — purple; 115 kV — blue; 161 kV — vermilion; 230 kV — violet;
-      345 kV — gold; 500 kV — deep red; 765 kV — charcoal.
-
-    Other reported voltage levels receive a separate color automatically. Lines
-    with no recognized voltage are shown in grey. The legend only appears for
-    voltage classes present in the uploaded transmission dataset.
-    """)
-
-    st.markdown(f"""
-**Current dataset:** {source_label}
-
-**Official EIA-860M page:**  
-{EIA_PAGE}
-
-EIA's monthly inventory contains reported generator information for existing
-and proposed generation. Monthly data may be preliminary and revised.
-
-A generator-level row is not necessarily a distinct development project.
-Some records may not have coordinates or reported storage energy capacity.
-""")
-
-    sources = pd.DataFrame([
-        {
-            "Provider": "EIA monthly inventory",
-            "Purpose": "Generator records",
-            "Official source": EIA_PAGE,
-        },
-        {
-            "Provider": "EIA annual inventory",
-            "Purpose": "Annual generator data",
-            "Official source": "https://www.eia.gov/electricity/data/eia860/",
-        },
-        {
-            "Provider": "NREL",
-            "Purpose": "Renewable resource information",
-            "Official source": "https://developer.nrel.gov/",
-        },
-        {
-            "Provider": "USGS",
-            "Purpose": "Elevation and terrain",
-            "Official source": "https://www.usgs.gov/",
-        },
-        {
-            "Provider": "FEMA",
-            "Purpose": "Flood hazard information",
-            "Official source": "https://www.fema.gov/flood-maps",
-        },
-        {
-            "Provider": "USFWS",
-            "Purpose": "Wetlands and ecology",
-            "Official source": "https://www.fws.gov/",
-        },
-        {
-            "Provider": "ERCOT",
-            "Purpose": "Texas power market",
-            "Official source": "https://www.ercot.com/",
-        },
-        {
-            "Provider": "CAISO",
-            "Purpose": "California power market",
-            "Official source": "https://www.caiso.com/",
-        },
-        {
-            "Provider": "MISO",
-            "Purpose": "Regional market information",
-            "Official source": "https://www.misoenergy.org/",
-        },
-        {
-            "Provider": "PJM",
-            "Purpose": "Regional market information",
-            "Official source": "https://www.pjm.com/",
-        },
-    ])
-
-    st.dataframe(
-        sources,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Official source": st.column_config.LinkColumn(
-                "Official source"
-            ),
-        },
-    )
-
-    status_table = pd.DataFrame([
-        {"Feature": "Solar / Wind / BESS selection", "Status": "Implemented"},
-        {"Feature": "Technology-aware filtering", "Status": "Implemented"},
-        {"Feature": "Project-level detail", "Status": "Implemented"},
-        {"Feature": "Repository CSV normalization", "Status": "Implemented"},
-        {"Feature": "CSV, XLS and XLSX upload", "Status": "Implemented"},
-        {"Feature": "Optional EIA workbook connector", "Status": "Internet required"},
-        {"Feature": "Repository transmission CSV/KMZ auto-discovery", "Status": "Implemented"},
-        {"Feature": "Voltage-colored transmission lines + legend", "Status": "Implemented"},
-        {"Feature": "Grid/substation points from spatial data", "Status": "When point geometry is present"},
-        {"Feature": "Parcel ownership / assessor records", "Status": "Available when parcel data access is configured; coverage varies"},
-        {"Feature": "Verified interconnection capacity", "Status": "Not connected"},
-        {"Feature": "Live power-market prices", "Status": "Not connected"},
-    ])
-
-    st.markdown(
-        '<div class="section-title">Implementation status</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.dataframe(
-        status_table,
-        use_container_width=True,
-        hide_index=True,
-    )
 
 
 # ============================================================
@@ -3778,7 +3756,7 @@ def _land_get_field(record, aliases):
 
 with tab_land_parcel:
     st.markdown(
-        '<div class="section-title">Site & Land Parcel Intelligence</div>',
+        '<div class="section-title">L — Land & Real Estate · Site & Parcel Intelligence</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
