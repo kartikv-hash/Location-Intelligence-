@@ -1790,12 +1790,12 @@ st.markdown("""
         Know Where To Build
     </div>
     <div class="navrow">
-        <span class="navitem active">S · </span>
-        <span class="navitem">I · </span>
-        <span class="navitem">G · </span>
-        <span class="navitem">N · </span>
-        <span class="navitem">A · </span>
-        <span class="navitem">L · </span>
+        <span class="navitem active">S ·</span>
+        <span class="navitem">I ·</span>
+        <span class="navitem">G ·</span>
+        <span class="navitem">N ·</span>
+        <span class="navitem">A ·</span>
+        <span class="navitem">L</span>
     </div>
 </div>
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
