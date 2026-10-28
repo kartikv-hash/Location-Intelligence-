@@ -1789,14 +1789,48 @@ st.markdown("""
     <div class="brand-tagline">
         Know Where To Build
     </div>
-    <div class="navrow">
-        <span class="navitem active">S ·</span>
-        <span class="navitem">I ·</span>
-        <span class="navitem">G ·</span>
-        <span class="navitem">N ·</span>
-        <span class="navitem">A ·</span>
-        <span class="navitem">L</span>
-    </div>
+ <div class="navrow">
+    <span class="navitem active">S ·</span>
+    <span class="navitem">I ·</span>
+    <span class="navitem">G ·</span>
+    <span class="navitem">N ·</span>
+    <span class="navitem">A ·</span>
+    <span class="navitem">L</span>
+</div>
+
+<style>
+.navrow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    font-family: inherit;
+}
+
+.navitem {
+    color: #FFFFFF;
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 7px 9px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.navitem:hover {
+    background: rgba(255, 255, 255, 0.12);
+    transform: translateY(-1px);
+}
+
+.navitem.active {
+    color: #FF3B35;
+    background: rgba(255, 59, 53, 0.12);
+    box-shadow: inset 0 -3px 0 #FF3B35;
+}
+</style>
 </div>
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
