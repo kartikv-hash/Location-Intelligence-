@@ -1,4 +1,4 @@
-0
+
 import io
 import json
 import os
@@ -131,22 +131,23 @@ header[data-testid="stHeader"] {
     color: #000000;
 }
 
-/* Sunstripe header */
+/* Sunstripe SELECT header branding */
 .topbar {
-    background: #050714;
+    background: transparent;
     color: #FFFFFF;
-    margin: -1rem -1rem 0 -1rem;
-    padding: 22px 24px 15px;
-    border-bottom: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
 }
 
 .brand {
     font-family: 'Inter', 'DM Sans', Arial, sans-serif !important;
     text-align: center;
     font-size: 25px;
-    font-weight: 700;
+    font-weight: 800;
     letter-spacing: -0.7px;
     color: #FFFFFF !important;
+    line-height: 1.18;
 }
 
 .brand .accent {
@@ -156,32 +157,104 @@ header[data-testid="stHeader"] {
 .brand-tagline {
     text-align: center;
     font-size: 10px;
-    font-weight: 500;
+    font-weight: 700;
     letter-spacing: 1.8px;
     color: #FFFFFF !important;
     text-transform: uppercase;
-    margin-top: 5px;
+    margin-top: 6px;
 }
 
-.navrow {
-    display: flex;
-    justify-content: center;
-    gap: 27px;
-    flex-wrap: wrap;
-    margin-top: 20px;
-    font-size: 13px;
-    font-weight: 600;
+/* SIGNAL sits directly under the tagline, centered inside the same navy band. */
+.st-key-signal_header {
+    width: calc(100% + 2rem) !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+    margin: -1rem -1rem 1.35rem -1rem !important;
+    padding: 22px 24px 10px !important;
+    background: #050714 !important;
+    border-bottom: 2px solid #E8392D !important;
 }
 
-.navitem {
-    padding: 8px 0;
+.st-key-signal_header [data-testid="stMarkdownContainer"] {
+    background: transparent !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+    margin: 10px 0 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] > label {
+    display: none !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] {
+    display: flex !important;
+    width: 100% !important;
+    justify-content: center !important;
+    align-items: center !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: clamp(12px, 2vw, 24px) !important;
+    padding: 0 !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 30px !important;
+    margin: 0 !important;
+    padding: 7px 10px !important;
+    border-radius: 9px !important;
+    cursor: pointer !important;
     color: #FFFFFF !important;
-    border-bottom: 2px solid transparent;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    line-height: 1.2 !important;
+    background: transparent !important;
+    box-shadow: none;
+    transition: background .2s ease, color .2s ease, transform .2s ease !important;
 }
 
-.navitem.active {
-    color: #E8392D !important;
-    border-color: #E8392D;
+/* Remove every visual part of Streamlit's radio control; keep the clickable labels. */
+.st-key-signal_header div[data-testid="stRadio"] input[type="radio"],
+.st-key-signal_header div[data-testid="stRadio"] label [data-baseweb="radio"],
+.st-key-signal_header div[data-testid="stRadio"] label > div:first-child,
+.st-key-signal_header div[data-testid="stRadio"] label svg {
+    display: none !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label p,
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label span,
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label [data-testid="stMarkdownContainer"] {
+    color: #FFFFFF !important;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    margin: 0 !important;
+    line-height: 1.2 !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {
+    color: #FF3B35 !important;
+    background: rgba(255, 59, 53, .13) !important;
+    box-shadow: inset 0 -3px 0 #FF3B35 !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) p,
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) span {
+    color: #FF3B35 !important;
+}
+
+.st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
+    background: rgba(255,255,255,.10) !important;
+    transform: translateY(-1px);
 }
 
 /* Main heading */
@@ -595,75 +668,16 @@ section[data-testid="stSidebar"] input {
     box-shadow: 0 0 0 3px rgba(56,161,105,.12);
 }
 
-/* SIGNAL navigation: full-width navy band with a centered, compact letter row. */
-div[data-testid="stRadio"] {
-    width: calc(100% + 2rem) !important;
-    max-width: none !important;
-    box-sizing: border-box !important;
-    margin: 0 -1rem 1.35rem -1rem !important;
-    padding: 0 1rem 8px !important;
-    background: #050714 !important;
-    border-bottom: 2px solid #E8392D !important;
-}
-div[data-testid="stRadio"] > label { display: none !important; }
-div[data-testid="stRadio"] div[role="radiogroup"] {
-    width: 100% !important;
-    display: flex !important;
-    justify-content: center !important;
-    align-items: center !important;
-    gap: clamp(10px, 1.5vw, 22px) !important;
-    padding: 8px 0 2px !important;
-}
-div[data-testid="stRadio"] div[role="radiogroup"] label {
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    min-width: 38px !important;
-    margin: 0 !important;
-    padding: 7px 12px !important;
-    border-radius: 10px !important;
-    cursor: pointer !important;
-    color: #FFFFFF !important;
-    font-size: 16px !important;
-    font-weight: 800 !important;
-    line-height: 1.2 !important;
-    transition: background .2s ease, color .2s ease, transform .2s ease !important;
-}
-/* Hide the default circular radio indicator but retain the real Streamlit control. */
-div[data-testid="stRadio"] div[role="radiogroup"] label > div:first-child,
-div[data-testid="stRadio"] div[role="radiogroup"] label input[type="radio"] {
-    display: none !important;
-}
-div[data-testid="stRadio"] div[role="radiogroup"] label p,
-div[data-testid="stRadio"] div[role="radiogroup"] label span,
-div[data-testid="stRadio"] div[role="radiogroup"] label [data-testid="stMarkdownContainer"] {
-    color: #FFFFFF !important;
-    font-size: 16px !important;
-    font-weight: 800 !important;
-    margin: 0 !important;
-    line-height: 1.2 !important;
-}
-div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {
-    color: #FF3B35 !important;
-    background: rgba(255, 59, 53, .13) !important;
-    box-shadow: inset 0 -3px 0 #FF3B35 !important;
-}
-div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) p,
-div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) span {
-    color: #FF3B35 !important;
-}
-div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
-    background: rgba(255,255,255,.10) !important;
-    transform: translateY(-1px);
-}
+/* SIGNAL navigation styles are scoped to .st-key-signal_header above so other radio widgets remain unchanged. */
 
 @media (max-width: 768px) {
     .brand { font-size: 22px; }
-    .navrow { gap: 14px; font-size: 12px; }
-    div[data-testid="stRadio"] div[role="radiogroup"] { gap: 6px !important; }
-    div[data-testid="stRadio"] div[role="radiogroup"] label { min-width: 32px !important; padding: 7px 9px !important; }
-    div[data-testid="stRadio"] div[role="radiogroup"] label p,
-    div[data-testid="stRadio"] div[role="radiogroup"] label span { font-size: 14px !important; }
+    .brand { font-size: 22px; }
+    .st-key-signal_header { padding: 20px 12px 9px !important; }
+    .st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] { gap: 7px !important; }
+    .st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label { min-width: 26px !important; padding: 7px 8px !important; }
+    .st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label p,
+    .st-key-signal_header div[data-testid="stRadio"] div[role="radiogroup"] label span { font-size: 14px !important; }
     .hero { font-size: 32px; letter-spacing: -0.7px; }
     .subtitle { font-size: 14px; }
     .ss-ai-hero { padding: 17px 15px; gap: 12px; border-radius: 18px; }
@@ -1847,21 +1861,22 @@ def transmission_legend_html(color_map):
 # HEADER
 # ============================================================
 
-st.markdown("""
-<div class="topbar">
+# One real Streamlit navigation control inside the same full-width navy header.
+# Clicking a letter reruns the app and displays that SIGNAL section below.
+with st.container(key="signal_header", width="stretch"):
+    st.markdown("""
     <div class="brand">Sunstripe <span class="accent">SELECT</span></div>
     <div class="brand-tagline">Know Where To Build</div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# Real Streamlit navigation: selecting a SIGNAL letter renders its section.
-selected_signal = st.radio(
-    "SIGNAL navigation",
-    options=["S", "I", "G", "N", "A", "L"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="signal_nav",
-)
+    selected_signal = st.radio(
+        "SIGNAL navigation",
+        options=["S", "I", "G", "N", "A", "L"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="signal_nav",
+        width="stretch",
+    )
 
 st.markdown("""
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
