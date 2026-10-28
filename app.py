@@ -16,6 +16,7 @@ import requests
 import streamlit as st
 import numpy as np
 import folium
+import pydeck as pdk
 from folium.plugins import Draw, MousePosition
 from streamlit_folium import st_folium
 from datetime import datetime, timedelta
@@ -3908,6 +3909,95 @@ if selected_signal == "L":
         "are connected, the selected parcel's available assessor and land information "
         "will load automatically."
     )
+
+    # ------------------------------------------------------------
+    # USER-IMPORTED PARCEL MAP (PyDeck + MapLibre basemap)
+    # This is a separate upload-driven map so existing lookup/map
+    # behavior remains unchanged. GeoJSON geometry stays client-rendered.
+    # ------------------------------------------------------------
+    st.markdown('<div class="section-title">Interactive Parcel Map</div>', unsafe_allow_html=True)
+    st.caption("Upload licensed parcel polygons as GeoJSON to inspect boundaries in your own map. CSV parcel points are not treated as parcel boundaries.")
+    parcel_geojson_upload = st.file_uploader(
+        "Upload parcel boundaries (GeoJSON)",
+        type=["geojson", "json"],
+        key="signal_l_parcel_geojson_upload",
+        help="Use a GeoJSON FeatureCollection with polygon or multipolygon geometries. Include parcel attributes such as parcel ID, acreage, and assessed value in feature properties.",
+    )
+    if parcel_geojson_upload is not None:
+        try:
+            parcel_geojson_data = json.load(parcel_geojson_upload)
+            if parcel_geojson_data.get("type") != "FeatureCollection" or not isinstance(parcel_geojson_data.get("features"), list):
+                st.error("Please upload a GeoJSON FeatureCollection.")
+            elif not parcel_geojson_data["features"]:
+                st.warning("The GeoJSON file contains no features.")
+            else:
+                # Extract coordinate pairs to center the map without requiring GeoPandas.
+                _parcel_lons, _parcel_lats = [], []
+                def _collect_parcel_coords(value):
+                    if isinstance(value, (list, tuple)) and len(value) >= 2 and all(isinstance(v, (int, float)) for v in value[:2]):
+                        lon, lat = float(value[0]), float(value[1])
+                        if -180 <= lon <= 180 and -90 <= lat <= 90:
+                            _parcel_lons.append(lon); _parcel_lats.append(lat)
+                    elif isinstance(value, (list, tuple)):
+                        for _child in value:
+                            _collect_parcel_coords(_child)
+                for _feature in parcel_geojson_data["features"]:
+                    _geometry = _feature.get("geometry") or {}
+                    _collect_parcel_coords(_geometry.get("coordinates", []))
+                if not _parcel_lons:
+                    st.error("No valid longitude/latitude coordinates were found in the GeoJSON.")
+                else:
+                    _props = [f.get("properties") or {} for f in parcel_geojson_data["features"]]
+                    _prop_names = sorted({str(k) for prop in _props for k in prop.keys()})
+                    _id_aliases = {"parcelid", "parcel_id", "apn", "parcelnumber", "parcel_number"}
+                    _area_aliases = {"acreage", "acres", "parcel_acres", "area_acres"}
+                    _value_aliases = {"assessedvalue", "assessed_value", "landvalue", "land_value", "marketvalue"}
+                    def _find_alias(names, aliases):
+                        return next((n for n in names if re.sub(r"[^a-z0-9]", "", n.lower()) in {re.sub(r"[^a-z0-9]", "", a) for a in aliases}), None)
+                    _id_field = _find_alias(_prop_names, _id_aliases)
+                    _area_field = _find_alias(_prop_names, _area_aliases)
+                    _value_field = _find_alias(_prop_names, _value_aliases)
+                    _filter_cols = st.columns(3)
+                    _min_acres = _filter_cols[0].number_input("Minimum acres", min_value=0.0, value=0.0, step=10.0, key="signal_l_min_acres")
+                    _max_acres = _filter_cols[1].number_input("Maximum acres (0 = no limit)", min_value=0.0, value=0.0, step=10.0, key="signal_l_max_acres")
+                    _max_price_acre = _filter_cols[2].number_input("Max land value per acre ($, 0 = no limit)", min_value=0.0, value=0.0, step=1000.0, key="signal_l_max_price_acre")
+                    _filtered_features = []
+                    for _feature in parcel_geojson_data["features"]:
+                        _p = _feature.get("properties") or {}
+                        try:
+                            _acres = float(_p.get(_area_field)) if _area_field and _p.get(_area_field) not in (None, "") else None
+                        except (TypeError, ValueError): _acres = None
+                        try:
+                            _value = float(_p.get(_value_field)) if _value_field and _p.get(_value_field) not in (None, "") else None
+                        except (TypeError, ValueError): _value = None
+                        _price_acre = (_value / _acres) if _value is not None and _acres and _acres > 0 else None
+                        if _area_field and _acres is not None and _acres < _min_acres: continue
+                        if _area_field and _max_acres > 0 and _acres is not None and _acres > _max_acres: continue
+                        if _max_price_acre > 0 and _price_acre is not None and _price_acre > _max_price_acre: continue
+                        _filtered_features.append(_feature)
+                    _filtered_geojson = {"type": "FeatureCollection", "features": _filtered_features}
+                    _view = pdk.ViewState(longitude=sum(_parcel_lons)/len(_parcel_lons), latitude=sum(_parcel_lats)/len(_parcel_lats), zoom=10, min_zoom=2, max_zoom=19, pitch=0)
+                    _layers = [pdk.Layer("GeoJsonLayer", data=_filtered_geojson, id="sunstripe-parcel-polygons", stroked=True, filled=True, extruded=False, pickable=True, auto_highlight=True, get_fill_color=[232, 57, 45, 55], get_line_color=[5, 7, 20, 210], line_width_min_pixels=1, get_line_width=1)]
+                    _tooltip = {"html": "<b>Parcel:</b> {" + (_id_field or "") + "}<br/><b>Acres:</b> {" + (_area_field or "") + "}<br/><b>Assessed value:</b> {" + (_value_field or "") + "}", "style": {"backgroundColor": "#050714", "color": "white"}} if (_id_field or _area_field or _value_field) else {"text": "Parcel feature"}
+                    st.pydeck_chart(pdk.Deck(layers=_layers, initial_view_state=_view, map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json", tooltip=_tooltip), use_container_width=True)
+                    st.caption(f"Showing {len(_filtered_features):,} of {len(parcel_geojson_data['features']):,} uploaded parcel features. Filters apply only when matching acreage/value fields exist in the file.")
+                    if _filtered_features:
+                        _summary_rows = []
+                        for _feature in _filtered_features:
+                            _p = _feature.get("properties") or {}
+                            _row = dict(_p)
+                            if _area_field and _value_field:
+                                try:
+                                    _a, _v = float(_p.get(_area_field)), float(_p.get(_value_field))
+                                    _row["Calculated value per acre ($/acre)"] = round(_v/_a, 2) if _a > 0 else None
+                                except (TypeError, ValueError): pass
+                            _summary_rows.append(_row)
+                        if _summary_rows:
+                            st.dataframe(pd.DataFrame(_summary_rows), use_container_width=True, hide_index=True)
+                            st.download_button("Download filtered parcel attributes (CSV)", data=pd.DataFrame(_summary_rows).to_csv(index=False).encode("utf-8"), file_name="sunstripe_select_filtered_parcels.csv", mime="text/csv", key="signal_l_download_filtered_parcels")
+        except Exception as _parcel_upload_error:
+            st.error(f"Could not read the parcel GeoJSON: {_parcel_upload_error}")
+
 
     # Use a deployment secret/environment variable for production; the session
     # input is available for quick testing without putting credentials in source code.
