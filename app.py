@@ -3465,8 +3465,9 @@ if selected_signal == "G":
 if selected_signal == "I":
     st.markdown('<div class="section-title">I — Interconnection Opportunities</div>', unsafe_allow_html=True)
     st.markdown(
-        "Review queue and study records, points of interconnection, requested capacity and known upgrade information. "
-        "Nearby lines or substations alone do not confirm interconnection availability."
+        "Screen MISO points of interconnection (POIs), explore active generation queue projects, "
+        "and review where network constraints may need closer study. The maps are screening tools, "
+        "not a guarantee of available capacity or approval."
     )
 
     _site_for_interconnection = st.session_state.get("site_data")
@@ -3475,12 +3476,62 @@ if selected_signal == "I":
         _ic1.metric("Screened transmission distance", f"{_site_for_interconnection.get('nearest_trans_dist_mi', 'Not available')} mi")
         _ic2.metric("Screened substation distance", f"{_site_for_interconnection.get('nearest_sub_dist_mi', 'Not available')} mi")
         _ic3.metric("Market label", str(_site_for_interconnection.get('wholesale_market', 'Not available')))
-        st.caption("The distance and market fields above are SiteIQ screening outputs, not a utility-confirmed point of interconnection or available capacity.")
+        st.caption("These are preliminary SiteIQ screening outputs, not a utility-confirmed POI, a queue position, or a statement of available interconnection capacity.")
     else:
         st.info("Select a location in S — Site Intelligence to display its current screening context here.")
 
-    st.markdown("### Interconnection queue / study records")
-    st.caption("Upload an official ISO/RTO, utility or consultant queue export to review the records. Queue MW is requested project capacity, not available grid headroom.")
+    st.markdown("### MISO POI capacity heatmap")
+    st.markdown(
+        "Explore the POI map to pre-screen candidate connection points. The map includes a requested-MW input, "
+        "voltage-level and POI filters, capacity shading, and an analysis summary for monitored facilities."
+    )
+    _poi_map_url = "https://cloud.cartovista.com/miso/ferc/poi-analysis-map"
+    try:
+        st.components.v1.iframe(_poi_map_url, height=720, scrolling=True)
+    except Exception as _poi_embed_error:
+        st.warning("The POI map could not be embedded in this session. Open it directly using the link below.")
+    st.markdown(f"[Open the MISO POI analysis map in a new tab]({_poi_map_url})")
+
+    with st.expander("How to read the POI heatmap", expanded=True):
+        _poi_col1, _poi_col2, _poi_col3 = st.columns(3)
+        with _poi_col1:
+            st.markdown("**1. Set the project scenario**")
+            st.write("Enter a proposed MW request and select the voltage level where applicable. Use the POI filter to focus the analysis on a candidate connection point.")
+        with _poi_col2:
+            st.markdown("**2. Review capacity and impacts**")
+            st.write("Check the displayed current-capacity scale, then inspect the monitored-facility results such as MW available, DFAX, MW impact, percentage impact, and before/after loading.")
+        with _poi_col3:
+            st.markdown("**3. Treat results as screening**")
+            st.write("Areas showing limited or negative modeled capacity deserve deeper review, but the result is not a deliverable interconnection offer and may not include every system, voltage, or stability constraint.")
+
+    st.markdown("### MISO active projects in the interconnection queue")
+    st.markdown(
+        "Use the active-project map to see how queued projects are distributed across the MISO footprint. "
+        "The map supports project/fuel-type and study-cycle exploration; project clusters can help identify "
+        "areas where multiple proposed resources may be competing for the same network capability."
+    )
+    _active_queue_map_url = "https://cloud.cartovista.com/miso/ferc/current-queue-map"
+    try:
+        st.components.v1.iframe(_active_queue_map_url, height=680, scrolling=True)
+    except Exception as _queue_embed_error:
+        st.warning("The active-project map could not be embedded in this session. Open it directly using the link below.")
+    st.markdown(f"[Open the MISO active projects map in a new tab]({_active_queue_map_url})")
+    st.markdown(
+        "Official MISO resources: [Interactive queue and project status](https://www.misoenergy.org/planning/resource-utilization/GI_Queue/gi-interactive-queue/) · "
+        "[Generator Interconnection Queue landing page](https://www.misoenergy.org/planning/resource-utilization/GI_Queue/)"
+    )
+
+    st.markdown("### What the maps suggest for development")
+    st.markdown("\n".join([
+        "- **Look for overlap:** several active projects near the same POI or transmission area can signal shared study exposure; it does not by itself prove congestion.",
+        "- **Compare both views:** use the active-project map to understand the queue context, then test the proposed MW request in the POI map and review the modeled facility impacts.",
+        "- **Do not equate queue MW with headroom:** requested capacity in the queue is not available transmission capacity, and not every queued project will reach commercial operation.",
+        "- **Verify before investing:** confirm the map’s model/study-cycle date and follow up with the relevant transmission owner and formal MISO study results."
+    ]))
+    st.caption("MISO describes the POI map as a pre-screening aid. Results are for informational purposes and do not replace formal interconnection studies or utility confirmation.")
+
+    st.markdown("### Upload queue / interconnection study records")
+    st.caption("Add an official ISO/RTO, utility or consultant queue export to filter project records and summarize requested capacity. Queue MW is not available grid headroom.")
     queue_upload = st.file_uploader(
         "Upload queue or interconnection study file (CSV or Excel)",
         type=["csv", "xlsx", "xls"],
@@ -3523,15 +3574,6 @@ if selected_signal == "I":
                 st.caption("The platform does not infer upgrade costs, study outcomes or available capacity when those fields are absent from the uploaded source.")
         except Exception as exc:
             st.error(f"Could not read the interconnection file: {exc}")
-    else:
-        st.info("No interconnection queue file is loaded. Upload a source export to analyze queue status, requested MW and reported point-of-interconnection fields.")
-        with st.expander("Official market and grid references"):
-            st.markdown(
-                "[ERCOT](https://www.ercot.com/)  ·  [CAISO](https://www.caiso.com/)  ·  "
-                "[MISO](https://www.misoenergy.org/)  ·  [PJM](https://www.pjm.com/)  ·  "
-                "[SPP](https://www.spp.org/)  ·  [ISO New England](https://www.iso-ne.com/)  ·  "
-                "[NYISO](https://www.nyiso.com/)"
-            )
 
 
 # ============================================================
