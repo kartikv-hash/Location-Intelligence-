@@ -2982,12 +2982,12 @@ def render_siteiq():
 # Transmission network covers interconnection/grid visibility; asset and
 # project views support alternatives/competitor review. Land & Real Estate is last.
 tab_siteiq, tab_interconnection, tab_grid, tab_neighborhood, tab_alternatives, tab_land_parcel = st.tabs([
-    "S — Site Intelligence",
-    "I — Interconnection Opportunities",
-    "G — Grid & Nodal Positioning Insights",
-    "N — Neighborhood & Community Sentiments",
-    "A — Alternatives & Competitor Landscape",
-    "L — Land & Real Estate",
+    "Site Intelligence",
+    "Interconnection Opportunities",
+    "Grid & Nodal Positioning Insights",
+    "Neighborhood & Community Sentiments",
+    "Alternatives & Competitor Landscape",
+    "Land & Real Estate",
 ])
 
 with tab_siteiq:
