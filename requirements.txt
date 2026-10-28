@@ -11,3 +11,5 @@ folium>=0.17
 streamlit-folium>=0.23
 fpdf2>=2.7
 requests>=2.31
+geopandas>=1.0
+pyogrio>=0.9
