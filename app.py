@@ -135,9 +135,9 @@ header[data-testid="stHeader"] {
 .topbar {
     background: #050714;
     color: #FFFFFF;
-    margin: -1rem -1rem 1.7rem -1rem;
+    margin: -1rem -1rem 0 -1rem;
     padding: 22px 24px 15px;
-    border-bottom: 2px solid #E8392D;
+    border-bottom: 0;
 }
 
 .brand {
@@ -593,6 +593,43 @@ section[data-testid="stSidebar"] input {
     border-radius: 50%;
     background: #38A169;
     box-shadow: 0 0 0 3px rgba(56,161,105,.12);
+}
+
+/* SIGNAL navigation uses real Streamlit radio controls, styled as clickable letters. */
+div[data-testid="stRadio"] {
+    margin: 0 -1rem 1.35rem -1rem !important;
+    padding: 0 1rem !important;
+    background: #050714 !important;
+    border-bottom: 2px solid #E8392D !important;
+}
+div[data-testid="stRadio"] > label { display: none !important; }
+div[data-testid="stRadio"] div[role="radiogroup"] {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 22px !important;
+    padding: 8px 0 10px !important;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] label {
+    margin: 0 !important;
+    padding: 7px 12px !important;
+    border-radius: 10px !important;
+    cursor: pointer !important;
+    color: #FFFFFF !important;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    transition: background .2s ease, color .2s ease !important;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] label > div:first-child {
+    display: none !important;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {
+    color: #FF3B35 !important;
+    background: rgba(255, 59, 53, .13) !important;
+    box-shadow: inset 0 -3px 0 #FF3B35 !important;
+}
+div[data-testid="stRadio"] div[role="radiogroup"] label:hover {
+    background: rgba(255,255,255,.10) !important;
 }
 
 @media (max-width: 768px) {
@@ -1783,81 +1820,24 @@ def transmission_legend_html(color_map):
 
 st.markdown("""
 <div class="topbar">
-    <div class="brand">
-        Sunstripe <span class="accent">SELECT</span>
-    </div>
-    <div class="brand-tagline">
-        Know Where To Build
-    </div>
-<div class="navrow">
-    <button class="navitem active" onclick="showSignal('S')">S</button>
-    <button class="navitem" onclick="showSignal('I')">I</button>
-    <button class="navitem" onclick="showSignal('G')">G</button>
-    <button class="navitem" onclick="showSignal('N')">N</button>
-    <button class="navitem" onclick="showSignal('A')">A</button>
-    <button class="navitem" onclick="showSignal('L')">L</button>
+    <div class="brand">Sunstripe <span class="accent">SELECT</span></div>
+    <div class="brand-tagline">Know Where To Build</div>
 </div>
+""", unsafe_allow_html=True)
 
-<style>
-.navrow {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 22px;
-    margin-top: 12px;
-    padding: 8px 12px;
-}
+# Real Streamlit navigation: selecting a SIGNAL letter renders its section.
+selected_signal = st.radio(
+    "SIGNAL navigation",
+    options=["S", "I", "G", "N", "A", "L"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="signal_nav",
+)
 
-.navitem {
-    background: transparent;
-    border: none;
-    color: #FFFFFF;
-    font: inherit;
-    font-size: 16px;
-    font-weight: 800;
-    padding: 8px 12px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: 0.2s ease;
-}
-
-.navitem:hover {
-    background: rgba(255,255,255,0.10);
-    transform: translateY(-1px);
-}
-
-.navitem.active {
-    color: #FF3B35;
-    background: rgba(255,59,53,0.13);
-    box-shadow: inset 0 -3px 0 #FF3B35;
-}
-</style>
-
-<script>
-function showSignal(letter) {
-    document.querySelectorAll('.navitem').forEach(item => {
-        item.classList.toggle('active', item.textContent.trim() === letter);
-    });
-
-    const sections = {
-        S: 'Site Intelligence',
-        I: 'Interconnection Opportunities',
-        G: 'Grid & Nodal Positioning Insights',
-        N: 'Neighborhood & Community Sentiments',
-        A: 'Alternatives & Competitor Landscape',
-        L: 'Land & Real Estate'
-    };
-
-    // Connect this to your existing section/tab navigation.
-    console.log('Open SIGNAL section:', sections[letter]);
-}
-</script>
-</div>
+st.markdown("""
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
-<div class="subtitle">
-Location and Site Intelligence for Renewable Energy and Large Loads
-</div>
+<div class="subtitle">Location and Site Intelligence for Renewable Energy and Large Loads</div>
 """, unsafe_allow_html=True)
 
 
@@ -2981,16 +2961,8 @@ def render_siteiq():
 # feature set permits. SiteIQ includes the site/community screening tools;
 # Transmission network covers interconnection/grid visibility; asset and
 # project views support alternatives/competitor review. Land & Real Estate is last.
-tab_siteiq, tab_interconnection, tab_grid, tab_neighborhood, tab_alternatives, tab_land_parcel = st.tabs([
-    "Site Intelligence",
-    "Interconnection Opportunities",
-    "Grid & Nodal Positioning Insights",
-    "Neighborhood & Community Sentiments",
-    "Alternatives & Competitor Landscape",
-    "Land & Real Estate",
-])
-
-with tab_siteiq:
+# The selected SIGNAL letter controls which main section is displayed.
+if selected_signal == "S":
     render_siteiq()
 
 
@@ -3049,7 +3021,7 @@ def fit_map_view(latitudes, longitudes, width=1350, height=700, zoom_padding=0.4
     return center, zoom
 
 
-with tab_alternatives:
+if selected_signal == "A":
     st.markdown(
         '<div class="section-title">A — Alternatives & Competitor Landscape</div>',
         unsafe_allow_html=True,
@@ -3204,7 +3176,7 @@ with tab_alternatives:
 # DEDICATED TRANSMISSION NETWORK MAP
 # ============================================================
 
-with tab_grid:
+if selected_signal == "G":
     st.markdown(
         '<div class="section-title">G — Grid & Nodal Positioning Insights</div>',
         unsafe_allow_html=True,
@@ -3446,7 +3418,7 @@ with tab_grid:
 # ============================================================
 # SIGNAL I — INTERCONNECTION OPPORTUNITIES
 # ============================================================
-with tab_interconnection:
+if selected_signal == "I":
     st.markdown('<div class="section-title">I — Interconnection Opportunities</div>', unsafe_allow_html=True)
     st.markdown(
         "Review queue and study records, points of interconnection, requested capacity and known upgrade information. "
@@ -3521,7 +3493,7 @@ with tab_interconnection:
 # ============================================================
 # SIGNAL N — NEIGHBORHOOD & COMMUNITY SENTIMENTS
 # ============================================================
-with tab_neighborhood:
+if selected_signal == "N":
     st.markdown('<div class="section-title">N — Neighborhood & Community Sentiments</div>', unsafe_allow_html=True)
     st.markdown(
         "Review community and permitting evidence that could affect development risk: zoning, permit status, "
@@ -3809,7 +3781,7 @@ def _land_get_field(record, aliases):
     return None
 
 
-with tab_land_parcel:
+if selected_signal == "L":
     st.markdown(
         '<div class="section-title">L — Land & Real Estate · Site & Parcel Intelligence</div>',
         unsafe_allow_html=True,
