@@ -1789,48 +1789,69 @@ st.markdown("""
     <div class="brand-tagline">
         Know Where To Build
     </div>
- <div class="navrow">
-    <span class="navitem active">S ·</span>
-    <span class="navitem">I ·</span>
-    <span class="navitem">G ·</span>
-    <span class="navitem">N ·</span>
-    <span class="navitem">A ·</span>
-    <span class="navitem">L</span>
+<div class="navrow">
+    <button class="navitem active" onclick="showSignal('S')">S</button>
+    <button class="navitem" onclick="showSignal('I')">I</button>
+    <button class="navitem" onclick="showSignal('G')">G</button>
+    <button class="navitem" onclick="showSignal('N')">N</button>
+    <button class="navitem" onclick="showSignal('A')">A</button>
+    <button class="navitem" onclick="showSignal('L')">L</button>
 </div>
 
 <style>
 .navrow {
     display: flex;
-    justify-content: space-between;
+    justify-content: center;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    font-family: inherit;
+    gap: 22px;
+    margin-top: 12px;
+    padding: 8px 12px;
 }
 
 .navitem {
+    background: transparent;
+    border: none;
     color: #FFFFFF;
+    font: inherit;
     font-size: 16px;
     font-weight: 800;
-    letter-spacing: 1px;
-    padding: 7px 9px;
+    padding: 8px 12px;
     border-radius: 10px;
     cursor: pointer;
-    transition: all 0.2s ease;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: 0.2s ease;
 }
 
 .navitem:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255,255,255,0.10);
     transform: translateY(-1px);
 }
 
 .navitem.active {
     color: #FF3B35;
-    background: rgba(255, 59, 53, 0.12);
+    background: rgba(255,59,53,0.13);
     box-shadow: inset 0 -3px 0 #FF3B35;
 }
 </style>
+
+<script>
+function showSignal(letter) {
+    document.querySelectorAll('.navitem').forEach(item => {
+        item.classList.toggle('active', item.textContent.trim() === letter);
+    });
+
+    const sections = {
+        S: 'Site Intelligence',
+        I: 'Interconnection Opportunities',
+        G: 'Grid & Nodal Positioning Insights',
+        N: 'Neighborhood & Community Sentiments',
+        A: 'Alternatives & Competitor Landscape',
+        L: 'Land & Real Estate'
+    };
+
+    // Connect this to your existing section/tab navigation.
+    console.log('Open SIGNAL section:', sections[letter]);
+}
+</script>
 </div>
 <div class="eyebrow">● LOCATION INTELLIGENCE / UNITED STATES</div>
 <div class="hero">Find the right place to build.</div>
