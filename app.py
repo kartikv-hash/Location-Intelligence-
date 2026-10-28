@@ -3541,6 +3541,308 @@ if selected_signal == "I":
             "- **Check the data vintage:** confirm the map/model and study-cycle dates and validate findings against formal MISO studies and the relevant transmission owner."
         ]))
         st.caption("MISO's POI map is a pre-screening aid. Results are informational and do not replace formal interconnection studies or utility confirmation.")
+    elif selected_iso == "ERCOT":
+        st.markdown("#### ERCOT planned capacity additions by fuel type")
+        st.markdown(
+            "Explore planned commercial-operation dates and capacity by fuel type using the September 2026 workbook. "
+            "Use the filters to compare years, fuel groups and financial-security status."
+        )
+
+        _ercot_default_workbook = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "ercot_capacity_changes_september_2026.xlsx",
+        )
+        _ercot_uploaded_workbook = st.file_uploader(
+            "Replace or refresh the ERCOT capacity workbook (optional)",
+            type=["xlsx", "xls"],
+            key="signal_ercot_capacity_analysis_workbook",
+            help="The bundled September 2026 workbook loads automatically when it is in the same folder as app.py.",
+        )
+
+        _ercot_workbook_bytes = None
+        if _ercot_uploaded_workbook is not None:
+            _ercot_workbook_bytes = _ercot_uploaded_workbook.getvalue()
+        elif os.path.isfile(_ercot_default_workbook):
+            try:
+                with open(_ercot_default_workbook, "rb") as _ercot_file:
+                    _ercot_workbook_bytes = _ercot_file.read()
+            except OSError as _ercot_file_error:
+                st.error(f"Could not read the bundled ERCOT workbook: {_ercot_file_error}")
+
+        if _ercot_workbook_bytes is None:
+            st.warning(
+                "The ERCOT workbook is not present beside app.py. Upload the supplied Excel workbook above, "
+                "or add ercot_capacity_changes_september_2026.xlsx to the same GitHub folder as app.py."
+            )
+        else:
+            try:
+                _ercot_excel = pd.ExcelFile(io.BytesIO(_ercot_workbook_bytes), engine="openpyxl")
+                _ercot_sheet_map = {
+                    "Wind Chart": "Wind",
+                    "Solar Chart": "Solar",
+                    "Battery Chart": "Battery",
+                    "Gas-Combined Cycle Chart": "Gas",
+                    "Gas-Other Chart": "Gas",
+                }
+                _ercot_parts = []
+                for _ercot_sheet, _ercot_fuel_label in _ercot_sheet_map.items():
+                    _ercot_part = pd.read_excel(
+                        _ercot_excel,
+                        sheet_name=_ercot_sheet,
+                        usecols="I:R",
+                    )
+                    _ercot_part.columns = [str(_c).strip() for _c in _ercot_part.columns]
+                    _ercot_part = _ercot_part.loc[
+                        _ercot_part["INR"].notna()
+                        & _ercot_part["Project Name"].notna()
+                        & (_ercot_part["INR"].astype(str).str.strip().str.upper() != "INR")
+                    ].copy()
+                    _ercot_part["Fuel"] = _ercot_fuel_label
+                    _ercot_part["Source Sheet"] = _ercot_sheet
+                    _ercot_parts.append(_ercot_part)
+
+                _ercot_all = pd.concat(_ercot_parts, ignore_index=True)
+                _ercot_all["INR"] = _ercot_all["INR"].astype(str).str.strip()
+                _ercot_all["Project Name"] = _ercot_all["Project Name"].astype(str).str.strip()
+                _ercot_all["County"] = _ercot_all["County"].fillna("Not reported").astype(str).str.strip()
+                _ercot_all["Technology"] = _ercot_all["Technology"].fillna("Not reported").astype(str).str.strip()
+                _ercot_all["Capacity (MW)"] = pd.to_numeric(_ercot_all["Capacity (MW)"], errors="coerce")
+                _ercot_all["Year"] = pd.to_numeric(_ercot_all["Year"], errors="coerce")
+
+                def _ercot_parse_excel_date(_series):
+                    _numeric_dates = pd.to_numeric(_series, errors="coerce")
+                    _parsed_dates = pd.to_datetime(_series, errors="coerce")
+                    _serial_mask = _numeric_dates.between(20000, 80000)
+                    if _serial_mask.any():
+                        _parsed_dates.loc[_serial_mask] = pd.to_datetime(
+                            _numeric_dates.loc[_serial_mask],
+                            unit="D",
+                            origin="1899-12-30",
+                            errors="coerce",
+                        )
+                    return _parsed_dates
+
+                _ercot_all["Projected COD"] = _ercot_parse_excel_date(_ercot_all["Projected COD"])
+                _ercot_all["IA Signed"] = _ercot_parse_excel_date(_ercot_all["IA Signed"])
+                _ercot_all["Capacity (MW)"] = _ercot_all["Capacity (MW)"].fillna(0.0)
+                _ercot_all["Financial Security"] = (
+                    _ercot_all["Financial Security"].fillna("Not reported").astype(str).str.strip()
+                )
+                _ercot_all.loc[_ercot_all["Financial Security"].isin(["", "nan", "None"]), "Financial Security"] = "Not reported"
+                _ercot_all["COD Year"] = _ercot_all["Projected COD"].dt.year
+                _ercot_all["COD Month"] = _ercot_all["Projected COD"].dt.strftime("%Y-%m")
+                _ercot_all["Capacity (GW)"] = _ercot_all["Capacity (MW)"] / 1000.0
+
+                _ercot_fuels = sorted(_ercot_all["Fuel"].dropna().unique().tolist())
+                _ercot_years = sorted(_ercot_all["COD Year"].dropna().astype(int).unique().tolist())
+                _ercot_security_options = sorted(_ercot_all["Financial Security"].dropna().unique().tolist())
+                _ef1, _ef2, _ef3 = st.columns([1.2, 1, 1.2])
+                with _ef1:
+                    _ercot_selected_fuels = st.multiselect(
+                        "Fuel type",
+                        _ercot_fuels,
+                        default=_ercot_fuels,
+                        key="signal_ercot_capacity_fuel_filter",
+                    )
+                with _ef2:
+                    _ercot_selected_years = st.multiselect(
+                        "Projected COD year",
+                        _ercot_years,
+                        default=_ercot_years,
+                        key="signal_ercot_capacity_year_filter",
+                    )
+                with _ef3:
+                    _ercot_selected_security = st.multiselect(
+                        "Financial security",
+                        _ercot_security_options,
+                        default=_ercot_security_options,
+                        key="signal_ercot_capacity_security_filter",
+                    )
+
+                _ercot_filtered = _ercot_all[
+                    _ercot_all["Fuel"].isin(_ercot_selected_fuels)
+                    & _ercot_all["COD Year"].isin(_ercot_selected_years)
+                    & _ercot_all["Financial Security"].isin(_ercot_selected_security)
+                ].copy()
+
+                if _ercot_filtered.empty:
+                    st.info("No records match the current filters. Select at least one fuel type, year and security status.")
+                else:
+                    _ercot_total_mw = float(_ercot_filtered["Capacity (MW)"].sum())
+                    _ercot_total_projects = int(len(_ercot_filtered))
+                    _ercot_fuel_totals = _ercot_filtered.groupby("Fuel", dropna=False)["Capacity (MW)"].sum().sort_values(ascending=False)
+                    _ercot_top_fuel = str(_ercot_fuel_totals.index[0]) if len(_ercot_fuel_totals) else "Not available"
+                    _ercot_security_yes = int((_ercot_filtered["Financial Security"].str.casefold() == "yes").sum())
+                    _ercot_security_yes_pct = _ercot_security_yes / _ercot_total_projects if _ercot_total_projects else 0
+
+                    _ek1, _ek2, _ek3, _ek4 = st.columns(4)
+                    _ek1.metric("Projects in current view", f"{_ercot_total_projects:,}")
+                    _ek2.metric("Planned capacity in view", f"{_ercot_total_mw / 1000:,.2f} GW")
+                    _ek3.metric("Largest fuel by capacity", _ercot_top_fuel, f"{_ercot_fuel_totals.iloc[0] / 1000:,.2f} GW")
+                    _ek4.metric("Financial security = Yes", f"{_ercot_security_yes:,}", f"{_ercot_security_yes_pct:.1%} of visible projects")
+
+                    st.markdown("##### Capacity mix and projected COD pipeline")
+                    _ec1, _ec2 = st.columns(2)
+                    with _ec1:
+                        _ercot_mix = (
+                            _ercot_filtered.groupby("Fuel", as_index=False)
+                            .agg(**{"Capacity (MW)": ("Capacity (MW)", "sum"), "Projects": ("INR", "count")})
+                            .sort_values("Capacity (MW)", ascending=False)
+                        )
+                        _fig_ercot_mix = px.bar(
+                            _ercot_mix,
+                            x="Fuel",
+                            y="Capacity (MW)",
+                            text="Capacity (MW)",
+                            title="Planned capacity by fuel type",
+                            color="Fuel",
+                            color_discrete_sequence=["#E8392D", "#142B49", "#D99A2B", "#428A91"],
+                            hover_data={"Projects": True, "Capacity (MW)": ":,.2f"},
+                            template="plotly_white",
+                        )
+                        _fig_ercot_mix.update_traces(texttemplate="%{y:,.0f} MW", textposition="outside", cliponaxis=False)
+                        _fig_ercot_mix.update_layout(showlegend=False, yaxis_title="Planned capacity (MW)", xaxis_title="Fuel type", margin=dict(l=10, r=10, t=55, b=10))
+                        st.plotly_chart(_fig_ercot_mix, use_container_width=True)
+
+                    with _ec2:
+                        _ercot_annual = (
+                            _ercot_filtered.dropna(subset=["COD Year"])
+                            .groupby(["COD Year", "Fuel"], as_index=False)
+                            .agg(**{"Capacity (MW)": ("Capacity (MW)", "sum"), "Projects": ("INR", "count")})
+                        )
+                        _ercot_annual["COD Year"] = _ercot_annual["COD Year"].astype(int).astype(str)
+                        _fig_ercot_annual = px.bar(
+                            _ercot_annual,
+                            x="COD Year",
+                            y="Capacity (MW)",
+                            color="Fuel",
+                            barmode="stack",
+                            title="Capacity by projected COD year",
+                            color_discrete_sequence=["#E8392D", "#142B49", "#D99A2B", "#428A91"],
+                            hover_data={"Projects": True, "Capacity (MW)": ":,.2f"},
+                            template="plotly_white",
+                        )
+                        _fig_ercot_annual.update_layout(yaxis_title="Planned capacity (MW)", xaxis_title="Projected COD year", legend_title_text="Fuel", margin=dict(l=10, r=10, t=55, b=10))
+                        st.plotly_chart(_fig_ercot_annual, use_container_width=True)
+
+                    _ercot_monthly = (
+                        _ercot_filtered.dropna(subset=["COD Month"])
+                        .groupby(["COD Month", "Fuel"], as_index=False)
+                        .agg(**{"Capacity (MW)": ("Capacity (MW)", "sum"), "Projects": ("INR", "count")})
+                        .sort_values("COD Month")
+                    )
+                    if not _ercot_monthly.empty:
+                        _fig_ercot_monthly = px.bar(
+                            _ercot_monthly,
+                            x="COD Month",
+                            y="Capacity (MW)",
+                            color="Fuel",
+                            barmode="stack",
+                            title="Monthly planned COD capacity",
+                            color_discrete_sequence=["#E8392D", "#142B49", "#D99A2B", "#428A91"],
+                            hover_data={"Projects": True, "Capacity (MW)": ":,.2f"},
+                            template="plotly_white",
+                        )
+                        _fig_ercot_monthly.update_layout(yaxis_title="Planned capacity (MW)", xaxis_title="Projected COD month", legend_title_text="Fuel", xaxis_tickangle=-45, margin=dict(l=10, r=10, t=55, b=10))
+                        st.plotly_chart(_fig_ercot_monthly, use_container_width=True)
+
+                    _ec3, _ec4 = st.columns(2)
+                    with _ec3:
+                        _ercot_security = (
+                            _ercot_filtered.groupby("Financial Security", as_index=False)
+                            .agg(**{"Projects": ("INR", "count"), "Capacity (MW)": ("Capacity (MW)", "sum")})
+                        )
+                        _fig_ercot_security = px.bar(
+                            _ercot_security,
+                            x="Financial Security",
+                            y="Projects",
+                            color="Financial Security",
+                            text="Projects",
+                            title="Project count by financial-security status",
+                            color_discrete_map={"Yes": "#142B49", "No": "#E8392D", "Not reported": "#D99A2B"},
+                            hover_data={"Capacity (MW)": ":,.2f"},
+                            template="plotly_white",
+                        )
+                        _fig_ercot_security.update_layout(showlegend=False, xaxis_title="Financial security recorded", yaxis_title="Projects", margin=dict(l=10, r=10, t=55, b=10))
+                        st.plotly_chart(_fig_ercot_security, use_container_width=True)
+
+                    with _ec4:
+                        _ercot_counties = (
+                            _ercot_filtered.groupby("County", as_index=False)
+                            .agg(**{"Projects": ("INR", "count"), "Capacity (MW)": ("Capacity (MW)", "sum")})
+                            .nlargest(10, "Capacity (MW)")
+                            .sort_values("Capacity (MW)", ascending=True)
+                        )
+                        _fig_ercot_counties = px.bar(
+                            _ercot_counties,
+                            x="Capacity (MW)",
+                            y="County",
+                            orientation="h",
+                            text="Capacity (MW)",
+                            title="Top 10 counties by planned capacity",
+                            color_discrete_sequence=["#E8392D"],
+                            hover_data={"Projects": True, "Capacity (MW)": ":,.2f"},
+                            template="plotly_white",
+                        )
+                        _fig_ercot_counties.update_traces(texttemplate="%{x:,.0f} MW", textposition="outside", cliponaxis=False)
+                        _fig_ercot_counties.update_layout(showlegend=False, xaxis_title="Planned capacity (MW)", yaxis_title="County", margin=dict(l=10, r=60, t=55, b=10))
+                        st.plotly_chart(_fig_ercot_counties, use_container_width=True)
+
+                    st.markdown("##### Key findings from the current selection")
+                    _ercot_insights = []
+                    if _ercot_total_mw > 0 and len(_ercot_fuel_totals):
+                        _ercot_share = float(_ercot_fuel_totals.iloc[0]) / _ercot_total_mw
+                        _ercot_insights.append(
+                            f"**Capacity leader:** {_ercot_top_fuel} represents {_ercot_share:.1%} of planned capacity in the filtered view."
+                        )
+                    _ercot_annual_totals = _ercot_filtered.dropna(subset=["COD Year"]).groupby("COD Year")["Capacity (MW)"].sum()
+                    if len(_ercot_annual_totals):
+                        _ercot_peak_year = int(_ercot_annual_totals.idxmax())
+                        _ercot_insights.append(
+                            f"**Largest projected COD year:** {_ercot_peak_year}, with {_ercot_annual_totals.max() / 1000:,.2f} GW currently listed."
+                        )
+                    _ercot_month_totals = _ercot_filtered.dropna(subset=["COD Month"]).groupby("COD Month")["Capacity (MW)"].sum()
+                    if len(_ercot_month_totals):
+                        _ercot_peak_month = str(_ercot_month_totals.idxmax())
+                        _ercot_insights.append(
+                            f"**Largest projected COD month:** {_ercot_peak_month}, with {_ercot_month_totals.max() / 1000:,.2f} GW currently listed."
+                        )
+                    _ercot_security_no = int((_ercot_filtered["Financial Security"].str.casefold() == "no").sum())
+                    _ercot_insights.append(
+                        f"**Financial security field:** {_ercot_security_yes:,} projects are marked Yes and {_ercot_security_no:,} are marked No in this view; these fields do not establish queue readiness or project viability."
+                    )
+                    st.markdown("\n".join([f"- {item}" for item in _ercot_insights]))
+
+                    _ercot_table_columns = [
+                        "INR", "Project Name", "County", "Fuel", "Technology", "Capacity (MW)",
+                        "Projected COD", "IA Signed", "Financial Security",
+                    ]
+                    _ercot_detail = _ercot_filtered[_ercot_table_columns].sort_values("Capacity (MW)", ascending=False).copy()
+                    for _date_col in ["Projected COD", "IA Signed"]:
+                        _ercot_detail[_date_col] = _ercot_detail[_date_col].dt.strftime("%Y-%m-%d")
+                    st.markdown("##### Project-level records")
+                    st.caption("Records are sorted by listed capacity. Projected COD is the date in the workbook, not confirmation that a project reached commercial operation.")
+                    st.dataframe(_ercot_detail, use_container_width=True, hide_index=True, height=370)
+                    st.download_button(
+                        "Download filtered ERCOT capacity records (CSV)",
+                        data=_ercot_detail.to_csv(index=False).encode("utf-8"),
+                        file_name="ercot_planned_capacity_filtered.csv",
+                        mime="text/csv",
+                        key="signal_ercot_capacity_download",
+                    )
+
+                st.warning(
+                    "Interpretation note: this is a September 2026 planned-capacity snapshot. Projected COD dates are projections and may be revised; "
+                    "dates earlier than the current date do not confirm actual operation. Listed project MW is not a measure of available grid headroom, "
+                    "deliverable interconnection capacity or approved transmission service."
+                )
+                st.caption(
+                    "Data source: uploaded workbook, sheets Wind Chart, Solar Chart, Battery Chart, Gas-Combined Cycle Chart and Gas-Other Chart; "
+                    "project fields begin in columns I:R. Four listed records have 0 MW in the source and are retained in project counts."
+                )
+            except Exception as _ercot_analysis_error:
+                st.error(f"Could not analyze the ERCOT capacity workbook: {_ercot_analysis_error}")
+                st.caption("Check that the workbook contains the expected five sheets and the project-data columns in I:R.")
     else:
         st.info(
             f"The {selected_iso} interconnection heatmap is not connected yet. This market has its own panel ready for its map and queue visualization to be added later. "
