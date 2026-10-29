@@ -3852,132 +3852,318 @@ if selected_signal == "I":
     elif selected_iso.startswith("DEC") or selected_iso.startswith("DEP"):
         _duke_code = "DEC" if selected_iso.startswith("DEC") else "DEP"
         _duke_name = "Duke Energy Carolinas" if _duke_code == "DEC" else "Duke Energy Progress"
-        _duke_map_url = (
-            "https://dec.poi-heatmap.duke-energy.app/"
-            if _duke_code == "DEC"
-            else "https://www.oasis.oati.com/"
-        )
-        _duke_guide_url = "https://www.oasis.oati.com/woa/docs/CPL/CPLdocs/User_Guide_-_CAR_POI_Heatmap_v0.pdf"
+        _duke_default_center = [35.45, -80.65] if _duke_code == "DEC" else [35.65, -78.75]
 
         st.markdown(
             '<div style="border:1px solid #E7E0DB;border-radius:18px;padding:20px 22px;'
             'background:linear-gradient(135deg,#FFFDFA 0%,#F7F3F0 100%);margin:6px 0 16px;'
             'box-shadow:0 8px 24px rgba(5,7,20,0.05);">'
             '<div style="font-size:11px;letter-spacing:1.5px;font-weight:800;color:#E8392D;">'
-            'DUKE ENERGY  ·  POI INTELLIGENCE</div>'
+            'DUKE ENERGY  ·  NATIVE POI MAP</div>'
             f'<div style="font-size:27px;line-height:1.2;font-weight:800;color:#050714;margin-top:7px;">'
-            f'{_duke_code} heatmap</div>'
+            f'{_duke_code} interconnection heatmap</div>'
             f'<div style="font-size:15px;color:#45414A;margin-top:6px;">{_duke_name}</div>'
             '<div style="font-size:14px;line-height:1.65;color:#5B5660;margin-top:10px;">'
-            'Compare modeled interconnection conditions by study scenario and point. '
-            'The live map opens separately because it is not rendering inside this embedded page.</div>'
+            'Explore point locations and source-reported values directly in Sunstripe SELECT. '
+            'Upload an authorized POI export to populate the map and analysis. No external map window is used.</div>'
             '</div>',
             unsafe_allow_html=True,
         )
 
         _duke_resource = st.selectbox(
-            "What type of project are you screening?",
+            "Project technology",
             ["Solar generation", "Wind generation", "Battery storage"],
             key=f"signal_duke_resource_{_duke_code}",
-            help="This changes the interpretation note below. It does not alter the utility map itself.",
+            help="The technology selection updates the screening guidance. It does not change source study values.",
         )
 
-        _duke_steps = st.columns(3, gap="medium")
-        with _duke_steps[0]:
-            st.markdown(
-                '<div style="height:100%;border:1px solid #E7E0DB;border-radius:14px;padding:15px;'
-                'background:#FFFFFF;"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#E8392D;">'
-                '01  CHOOSE</div><div style="font-size:16px;font-weight:750;color:#111827;margin:7px 0;">'
-                'Pick a scenario</div><div style="font-size:13px;line-height:1.55;color:#5B5660;">'
-                'Use the Scenario menu in the live map. Compare every case that fits your project type.</div></div>',
-                unsafe_allow_html=True,
-            )
-        with _duke_steps[1]:
-            st.markdown(
-                '<div style="height:100%;border:1px solid #E7E0DB;border-radius:14px;padding:15px;'
-                'background:#FFFFFF;"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#E8392D;">'
-                '02  EXPLORE</div><div style="font-size:16px;font-weight:750;color:#111827;margin:7px 0;">'
-                'Select a POI</div><div style="font-size:13px;line-height:1.55;color:#5B5660;">'
-                'Inspect the selected point, its displayed capacity or limits, units, legend, and study notes.</div></div>',
-                unsafe_allow_html=True,
-            )
-        with _duke_steps[2]:
-            st.markdown(
-                '<div style="height:100%;border:1px solid #E7E0DB;border-radius:14px;padding:15px;'
-                'background:#FFFFFF;"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#E8392D;">'
-                '03  VERIFY</div><div style="font-size:16px;font-weight:750;color:#111827;margin:7px 0;">'
-                'Check before shortlisting</div><div style="font-size:13px;line-height:1.55;color:#5B5660;">'
-                'Use the map for early screening only. Confirm location feasibility and upgrades with the utility.</div></div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("#### Live utility heatmap")
-        st.info(
-            "The map did not load inside the embedded panel, so this view no longer shows a blank frame. "
-            "Open the live utility map below to use its own scenario menu, map layers, and POI selection."
+        _duke_file = st.file_uploader(
+            f"Upload { _duke_code } POI heatmap data",
+            type=["csv", "xlsx", "xls", "geojson", "json"],
+            key=f"signal_duke_native_map_data_{_duke_code}",
+            help="Use an authorized export from the utility heatmap, or a licensed dataset. CSV/Excel needs latitude and longitude columns; GeoJSON can contain point or polygon features.",
         )
-        _duke_open_col, _duke_guide_col = st.columns([1.25, 1], gap="medium")
-        with _duke_open_col:
-            if _duke_code == "DEC":
-                st.link_button(
-                    "Open DEC interactive heatmap",
-                    _duke_map_url,
-                    type="primary",
-                    use_container_width=True,
-                )
-            else:
-                st.link_button(
-                    "Open Duke Energy OASIS",
-                    _duke_map_url,
-                    type="primary",
-                    use_container_width=True,
-                )
-        with _duke_guide_col:
-            st.link_button(
-                "Read the POI map guide",
-                _duke_guide_url,
+
+        _duke_rows = None
+        _duke_geojson = None
+        _duke_data_problem = None
+        if _duke_file is not None:
+            try:
+                _duke_suffix = Path(_duke_file.name).suffix.lower()
+                if _duke_suffix in {".geojson", ".json"}:
+                    _duke_payload = json.loads(_duke_file.getvalue().decode("utf-8-sig"))
+                    if isinstance(_duke_payload, dict) and _duke_payload.get("type") == "FeatureCollection":
+                        _duke_features = _duke_payload.get("features", [])
+                    elif isinstance(_duke_payload, dict) and _duke_payload.get("type") == "Feature":
+                        _duke_features = [_duke_payload]
+                    else:
+                        raise ValueError("GeoJSON must contain a FeatureCollection or Feature.")
+                    if not _duke_features:
+                        raise ValueError("The GeoJSON file contains no features.")
+                    import geopandas as _duke_gpd
+                    _duke_gdf = _duke_gpd.GeoDataFrame.from_features(_duke_features, crs="EPSG:4326")
+                    if _duke_gdf.empty or "geometry" not in _duke_gdf:
+                        raise ValueError("No usable geometry was found in the GeoJSON file.")
+                    if _duke_gdf.crs is None:
+                        _duke_gdf = _duke_gdf.set_crs("EPSG:4326")
+                    if str(_duke_gdf.crs).upper() not in {"EPSG:4326", "OGC:CRS84"}:
+                        _duke_gdf = _duke_gdf.to_crs("EPSG:4326")
+                    _duke_metric_crs = _duke_gdf.to_crs("EPSG:5070")
+                    _duke_centroid_metric = _duke_metric_crs.geometry.centroid
+                    _duke_centroids = _duke_gpd.GeoSeries(_duke_centroid_metric, crs="EPSG:5070").to_crs("EPSG:4326")
+                    _duke_rows = _duke_gdf.drop(columns=["geometry"]).copy()
+                    _duke_rows["_latitude"] = _duke_centroids.y.to_numpy()
+                    _duke_rows["_longitude"] = _duke_centroids.x.to_numpy()
+                    _duke_geojson = json.loads(_duke_gdf.to_json())
+                elif _duke_suffix in {".xlsx", ".xls"}:
+                    _duke_rows = _read_signal_table(_duke_file)
+                else:
+                    _duke_rows = pd.read_csv(io.BytesIO(_duke_file.getvalue()))
+
+                if _duke_rows is None or _duke_rows.empty:
+                    raise ValueError("The uploaded file contains no records.")
+                _duke_rows.columns = [str(c).strip() for c in _duke_rows.columns]
+
+                if "_latitude" not in _duke_rows.columns or "_longitude" not in _duke_rows.columns:
+                    _duke_lat_aliases = {"lat", "latitude", "ycoord", "ycoordinate", "pointlatitude", "poilatitude", "decimaldegree latitude"}
+                    _duke_lon_aliases = {"lon", "long", "longitude", "xcoord", "xcoordinate", "pointlongitude", "poilongitude"}
+                    _duke_norm = {c: re.sub(r"[^a-z0-9]", "", c.lower()) for c in _duke_rows.columns}
+                    _duke_lat_match = next((c for c in _duke_rows.columns if _duke_norm[c] in {re.sub(r"[^a-z0-9]", "", x) for x in _duke_lat_aliases}), None)
+                    _duke_lon_match = next((c for c in _duke_rows.columns if _duke_norm[c] in {re.sub(r"[^a-z0-9]", "", x) for x in _duke_lon_aliases}), None)
+                    _duke_cc1, _duke_cc2 = st.columns(2)
+                    with _duke_cc1:
+                        _duke_lat_col = st.selectbox(
+                            "Latitude column", list(_duke_rows.columns),
+                            index=list(_duke_rows.columns).index(_duke_lat_match) if _duke_lat_match in _duke_rows.columns else 0,
+                            key=f"signal_duke_lat_col_{_duke_code}",
+                        )
+                    with _duke_cc2:
+                        _duke_lon_col = st.selectbox(
+                            "Longitude column", list(_duke_rows.columns),
+                            index=list(_duke_rows.columns).index(_duke_lon_match) if _duke_lon_match in _duke_rows.columns else min(1, len(_duke_rows.columns)-1),
+                            key=f"signal_duke_lon_col_{_duke_code}",
+                        )
+                    if _duke_lat_col == _duke_lon_col:
+                        raise ValueError("Latitude and longitude must use different columns.")
+                    _duke_rows["_latitude"] = pd.to_numeric(_duke_rows[_duke_lat_col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+                    _duke_rows["_longitude"] = pd.to_numeric(_duke_rows[_duke_lon_col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+                else:
+                    _duke_rows["_latitude"] = pd.to_numeric(_duke_rows["_latitude"], errors="coerce")
+                    _duke_rows["_longitude"] = pd.to_numeric(_duke_rows["_longitude"], errors="coerce")
+
+                _duke_rows["_latitude"] = pd.to_numeric(_duke_rows["_latitude"], errors="coerce")
+                _duke_rows["_longitude"] = pd.to_numeric(_duke_rows["_longitude"], errors="coerce")
+                _duke_rows = _duke_rows.dropna(subset=["_latitude", "_longitude"]).copy()
+                _duke_rows = _duke_rows[
+                    _duke_rows["_latitude"].between(-90, 90) & _duke_rows["_longitude"].between(-180, 180)
+                ].copy().reset_index(drop=True)
+                if _duke_rows.empty:
+                    raise ValueError("No valid latitude and longitude values were found. Choose the correct coordinate columns and check their units.")
+            except Exception as _duke_load_error:
+                _duke_data_problem = str(_duke_load_error)
+                _duke_rows = None
+                _duke_geojson = None
+
+        if _duke_data_problem:
+            st.error(f"Could not load the POI dataset: {_duke_data_problem}")
+
+        if _duke_rows is None:
+            st.info(
+                "The in-platform map is ready, but official DEC/DEP POI capacity values are not bundled in this app. "
+                "Upload an authorized CSV, Excel or GeoJSON export to populate the map. Until source data is provided, "
+                "the map below shows geography only; it does not invent POI locations or available-capacity values."
+            )
+            _duke_map = folium.Map(
+                location=_duke_default_center,
+                zoom_start=7,
+                tiles="CartoDB positron",
+                control_scale=True,
+            )
+            st_folium(
+                _duke_map,
+                height=610,
                 use_container_width=True,
-            )
-
-        if _duke_code == "DEP":
-            st.caption(
-                "The published Duke Energy guidance directs users to OATI OASIS for the DEC and DEP heatmaps. "
-                "Open the portal, sign in if prompted, and locate the POI heatmap in the utility interconnection materials. "
-                "A separate public DEP map address could not be verified, so this button uses the official portal."
-            )
-
-        st.markdown("#### What your selection means")
-        if _duke_resource == "Solar generation":
-            st.markdown(
-                f"For a **solar project in { _duke_code }**, compare the applicable generation scenarios and inspect "
-                "the displayed capacity and limit values at each candidate POI. A favorable color alone is not proof "
-                "that the project can connect without network upgrades."
-            )
-        elif _duke_resource == "Wind generation":
-            st.markdown(
-                f"For a **wind project in { _duke_code }**, compare relevant generation scenarios at several nearby POIs. "
-                "Review the exact metric and units shown by the map, then verify transmission and interconnection requirements "
-                "with the utility."
+                returned_objects=[],
+                key=f"signal_duke_native_empty_map_{_duke_code}",
             )
         else:
-            st.markdown(
-                f"For **battery storage in { _duke_code }**, compare the relevant charging and discharging cases where available. "
-                "Charging and export conditions can differ. Confirm whether the map scenario represents generation, charging, or both. "
-                "The map does not confirm that an existing substation can accept the project as designed."
+            _duke_coord_aliases = {
+                "lat", "latitude", "lon", "long", "longitude", "xcoord", "xcoordinate",
+                "ycoord", "ycoordinate", "pointlatitude", "poilatitude", "pointlongitude", "poilongitude",
+            }
+            _duke_noncoord_cols = [
+                c for c in _duke_rows.columns
+                if c not in {"_latitude", "_longitude"}
+                and re.sub(r"[^a-z0-9]", "", str(c).lower()) not in _duke_coord_aliases
+            ]
+            _duke_string_cols = [c for c in _duke_noncoord_cols if not pd.api.types.is_numeric_dtype(_duke_rows[c])]
+            _duke_label_pref = next((c for c in _duke_string_cols if any(k in re.sub(r"[^a-z0-9]", "", c.lower()) for k in ["poi", "substation", "name", "bus", "station", "id"])), None)
+            _duke_metric_cols = []
+            for _duke_c in _duke_noncoord_cols:
+                _duke_num = pd.to_numeric(_duke_rows[_duke_c].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                if _duke_num.notna().sum() >= max(1, int(len(_duke_rows) * 0.25)):
+                    _duke_metric_cols.append(_duke_c)
+            _duke_capacity_pref = next((c for c in _duke_metric_cols if any(k in re.sub(r"[^a-z0-9]", "", c.lower()) for k in ["capacity", "availablemw", "generationmw", "chargingmw", "limitmw", "mwavailable", "incrementalmw", "headroom"])), None)
+
+            _duke_cfg1, _duke_cfg2 = st.columns([1, 1], gap="medium")
+            with _duke_cfg1:
+                _duke_label_col = st.selectbox(
+                    "POI label field",
+                    ["Row number"] + _duke_noncoord_cols,
+                    index=(["Row number"] + _duke_noncoord_cols).index(_duke_label_pref) if _duke_label_pref in _duke_noncoord_cols else 0,
+                    key=f"signal_duke_label_field_{_duke_code}",
+                )
+            with _duke_cfg2:
+                _duke_metric_col = st.selectbox(
+                    "Colour points by",
+                    ["Show all POIs equally"] + _duke_metric_cols,
+                    index=(["Show all POIs equally"] + _duke_metric_cols).index(_duke_capacity_pref) if _duke_capacity_pref in _duke_metric_cols else 0,
+                    key=f"signal_duke_metric_field_{_duke_code}",
+                    help="Select a source value to colour points from low to high. The map preserves the units and values in the supplied data.",
+                )
+
+            _duke_plot = _duke_rows.copy().reset_index(drop=True)
+            _duke_plot["_source_row"] = np.arange(1, len(_duke_plot) + 1)
+            if _duke_label_col == "Row number":
+                _duke_plot["_map_label"] = _duke_plot["_source_row"].map(lambda n: f"POI record {n}")
+            else:
+                _duke_plot["_map_label"] = _duke_plot[_duke_label_col].fillna("Unnamed POI").astype(str)
+            if _duke_metric_col != "Show all POIs equally":
+                _duke_plot["_map_metric"] = pd.to_numeric(_duke_plot[_duke_metric_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                _duke_valid_metric = _duke_plot["_map_metric"].dropna()
+                if _duke_valid_metric.empty:
+                    st.warning("The selected value field has no usable numeric values. Points will be shown with the same colour.")
+                    _duke_metric_col = "Show all POIs equally"
+            if _duke_metric_col == "Show all POIs equally":
+                _duke_plot["_map_color"] = "#2E79A7"
+                _duke_plot["_map_display_value"] = "Not provided"
+            else:
+                _duke_plot["_map_display_value"] = _duke_plot["_map_metric"].map(lambda v: f"{v:,.3g}" if pd.notna(v) else "Not reported")
+                _duke_series = _duke_plot["_map_metric"]
+                _duke_q = _duke_series.dropna().quantile([0.25, 0.5, 0.75]).to_dict()
+                def _duke_colour(v):
+                    if pd.isna(v):
+                        return "#8C8790"
+                    if v <= _duke_q.get(0.25, v):
+                        return "#D94B4B"
+                    if v <= _duke_q.get(0.5, v):
+                        return "#E99545"
+                    if v <= _duke_q.get(0.75, v):
+                        return "#E5C84B"
+                    return "#2FA36B"
+                _duke_plot["_map_color"] = _duke_plot["_map_metric"].map(_duke_colour)
+
+            _duke_valid_for_map = _duke_plot.dropna(subset=["_latitude", "_longitude"]).copy()
+            _duke_center = [float(_duke_valid_for_map["_latitude"].median()), float(_duke_valid_for_map["_longitude"].median())]
+            _duke_map = folium.Map(
+                location=_duke_center,
+                zoom_start=7,
+                tiles="CartoDB positron",
+                control_scale=True,
             )
+            _duke_marker_cluster = folium.FeatureGroup(name="POI records", show=True)
+            for _, _duke_point in _duke_valid_for_map.iterrows():
+                _duke_value_note = (
+                    f"{_duke_metric_col}: {_duke_point['_map_display_value']}"
+                    if _duke_metric_col != "Show all POIs equally" else "Source value: not selected"
+                )
+                _duke_tooltip = f"{_duke_point['_map_label']} · {_duke_value_note}"
+                _duke_popup_html = (
+                    '<div style="font-family:Arial,sans-serif;min-width:190px;">'
+                    f'<div style="font-weight:700;color:#E8392D;">{str(_duke_point["_map_label"])}</div>'
+                    f'<div style="margin-top:5px;">{_duke_value_note}</div>'
+                    f'<div style="margin-top:4px;color:#666;font-size:12px;">Lat {float(_duke_point["_latitude"]):.5f} · Lon {float(_duke_point["_longitude"]):.5f}</div>'
+                    '</div>'
+                )
+                folium.CircleMarker(
+                    location=[float(_duke_point["_latitude"]), float(_duke_point["_longitude"])],
+                    radius=7 if _duke_metric_col == "Show all POIs equally" else 8,
+                    color="#FFFFFF",
+                    weight=1.5,
+                    fill=True,
+                    fill_color=str(_duke_point["_map_color"]),
+                    fill_opacity=0.92,
+                    tooltip=_duke_tooltip,
+                    popup=folium.Popup(_duke_popup_html, max_width=320),
+                ).add_to(_duke_marker_cluster)
+            _duke_marker_cluster.add_to(_duke_map)
+            folium.LayerControl(collapsed=False).add_to(_duke_map)
 
-        with st.expander("How to read the map", expanded=True):
-            st.markdown("**01  Compare scenarios**")
-            st.write("Capacity can change by study case. Review every applicable scenario for the technology and configuration you are evaluating.")
-            st.markdown("**02  Read values with the legend**")
-            st.write("Use the numeric values, measurement units, selected point details, and legend together. Do not infer capacity from color alone.")
-            st.markdown("**03  Treat the result as an early screen**")
-            st.write("The map estimates modeled conditions at points on the transmission system. It is not an interconnection approval, a reserved capacity allocation, or a substitute for a formal study.")
+            _duke_top1, _duke_top2, _duke_top3 = st.columns(3)
+            _duke_top1.metric("POI records mapped", f"{len(_duke_valid_for_map):,}")
+            if _duke_metric_col != "Show all POIs equally" and _duke_plot["_map_metric"].notna().any():
+                _duke_top2.metric(f"Median · {_duke_metric_col}", f"{_duke_plot['_map_metric'].median():,.3g}")
+                _duke_top3.metric(f"Highest · {_duke_metric_col}", f"{_duke_plot['_map_metric'].max():,.3g}")
+            else:
+                _duke_top2.metric("Mapped coordinate coverage", f"{_duke_valid_for_map.shape[0] / max(1, len(_duke_rows)):.0%}")
+                _duke_top3.metric("Numeric field selected", "No")
 
+            if _duke_metric_col != "Show all POIs equally":
+                st.markdown(
+                    '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 10px;">'
+                    '<span style="background:#FBE5E5;border-radius:18px;padding:5px 10px;font-size:12px;color:#792B2B;">Lower values</span>'
+                    '<span style="background:#F8E6D5;border-radius:18px;padding:5px 10px;font-size:12px;color:#77411E;">Lower middle</span>'
+                    '<span style="background:#F9F0CE;border-radius:18px;padding:5px 10px;font-size:12px;color:#69550A;">Upper middle</span>'
+                    '<span style="background:#DDF3E5;border-radius:18px;padding:5px 10px;font-size:12px;color:#1F633D;">Higher values</span>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+            _duke_map_state = st_folium(
+                _duke_map,
+                height=650,
+                use_container_width=True,
+                returned_objects=["last_object_clicked"],
+                key=f"signal_duke_native_data_map_{_duke_code}",
+            )
+            _duke_clicked = (_duke_map_state or {}).get("last_object_clicked") if isinstance(_duke_map_state, dict) else None
+            if isinstance(_duke_clicked, dict) and "lat" in _duke_clicked and "lng" in _duke_clicked:
+                _duke_click_lat = float(_duke_clicked["lat"])
+                _duke_click_lon = float(_duke_clicked["lng"])
+                _duke_dist = (_duke_plot["_latitude"] - _duke_click_lat) ** 2 + ((_duke_plot["_longitude"] - _duke_click_lon) * np.cos(np.radians(_duke_click_lat))) ** 2
+                _duke_selected_row = _duke_plot.loc[_duke_dist.idxmin()]
+                st.markdown("#### Selected POI details")
+                st.markdown(f"**{_duke_selected_row['_map_label']}**")
+                _duke_details = _duke_rows.loc[[_duke_selected_row.name]].drop(columns=[c for c in ["_latitude", "_longitude"] if c in _duke_rows.columns], errors="ignore")
+                st.dataframe(_duke_details, use_container_width=True, hide_index=True)
+
+            st.markdown("#### Data analysis")
+            if _duke_metric_col != "Show all POIs equally" and _duke_plot["_map_metric"].notna().any():
+                _duke_metric_summary = _duke_plot["_map_metric"].describe(percentiles=[0.25, 0.5, 0.75]).to_frame("Source statistic")
+                _duke_metric_summary.index = [str(i).replace("25%", "25th percentile").replace("50%", "Median").replace("75%", "75th percentile").replace("count", "Records with values").replace("mean", "Mean").replace("std", "Standard deviation").replace("min", "Minimum").replace("max", "Maximum") for i in _duke_metric_summary.index]
+                st.dataframe(_duke_metric_summary, use_container_width=True)
+                st.caption(f"Colouring is based on relative quartiles of the uploaded field **{_duke_metric_col}**. The app does not assume a unit or imply that the values are officially verified unless the source dataset establishes that.")
+            else:
+                st.info("Choose a numeric capacity or limit field under ‘Colour points by’ to add value-based analysis. This view currently summarizes only the mapped POI locations.")
+
+            with st.expander("View and download mapped records"):
+                st.dataframe(_duke_plot.drop(columns=["_map_color"], errors="ignore"), use_container_width=True, hide_index=True, height=300)
+                st.download_button(
+                    f"Download { _duke_code } mapped records",
+                    data=_duke_plot.drop(columns=["_map_color"], errors="ignore").to_csv(index=False).encode("utf-8"),
+                    file_name=f"{_duke_code.lower()}_poi_map_records.csv",
+                    mime="text/csv",
+                    key=f"signal_duke_native_map_download_{_duke_code}",
+                )
+
+        st.markdown("#### What the selected technology means")
+        if _duke_resource == "Solar generation":
+            st.write("For solar, review the source's applicable generation scenario and compare several candidate POIs. Lower values in a chosen field may flag locations for deeper review, but the meaning depends on that field's definition and unit.")
+        elif _duke_resource == "Wind generation":
+            st.write("For wind, compare source values at several candidate POIs and confirm whether the study case reflects the proposed injection and relevant network configuration.")
+        else:
+            st.write("For battery storage, distinguish charging from discharging or generation cases whenever the source data provides those scenarios. Charging capability and export capability are not interchangeable.")
+
+        with st.expander("How to read this in-platform map", expanded=True):
+            st.markdown(
+                "**1. Load source data.** Use a licensed or otherwise authorized DEC/DEP POI export. CSV and Excel files need coordinate columns; GeoJSON may contain points or polygons.\n\n"
+                "**2. Choose a value field.** Select the source field that represents the metric you want to inspect. Colours use relative quartiles of that field, not universal capacity thresholds.\n\n"
+                "**3. Click a point.** Select a marker to inspect its popup and review the closest source record below the map.\n\n"
+                "**4. Verify before shortlisting.** Duke describes the heatmap as an estimate of additional generation or charging before network upgrades. It does not confirm engineering feasibility at an existing substation, reserve capacity, or replace a formal interconnection study."
+            )
         st.caption(
-            "Model currency: the published guide says the analysis is based on the most recently completed cluster study phase "
-            "and is updated within 30 days after a completed cluster study phase or restudy. Check the study case date and assumptions. "
-            "Sunstripe SELECT cannot read individual POI clicks from the external map, so the explanation above follows the selected utility and project type."
+            "Map and analysis run inside Sunstripe SELECT. Official Duke values are only displayed when supplied by the uploaded source. "
+            "The app does not fetch or scrape the utility's restricted heatmap service. Confirm data vintage, study scenario, units, and permitted use before relying on the results."
         )
 
     else:
