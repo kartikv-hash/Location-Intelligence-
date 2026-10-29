@@ -3480,16 +3480,19 @@ if selected_signal == "I":
     else:
         st.info("Select a location in S — Site Intelligence to display its current screening context here.")
 
-    _iso_rto_options = ["ERCOT", "MISO", "PJM", "SPP", "CAISO", "NYISO", "ISO-NE"]
+    _iso_rto_options = [
+        "ERCOT", "MISO", "PJM", "SPP", "CAISO", "NYISO", "ISO-NE",
+        "DEC — Duke Energy Carolinas", "DEP — Duke Energy Progress",
+    ]
     selected_iso = st.selectbox(
-        "Select ISO/RTO market",
+        "Select market / utility",
         _iso_rto_options,
         index=_iso_rto_options.index(st.session_state.get("signal_selected_iso", "MISO"))
         if st.session_state.get("signal_selected_iso", "MISO") in _iso_rto_options else 1,
         key="signal_selected_iso",
-        help="MISO maps are connected now. The other market panels are ready for their respective maps to be added later.",
+        help="Choose an ISO/RTO, or select DEC / DEP to open Duke Energy's utility-specific POI heatmap.",
     )
-    _iso_key = selected_iso.lower().replace("-", "_")
+    _iso_key = re.sub(r"[^a-z0-9]+", "_", selected_iso.lower()).strip("_")
     st.markdown(f"### {selected_iso} interconnection overview")
 
     if selected_iso == "MISO":
@@ -3843,6 +3846,73 @@ if selected_signal == "I":
             except Exception as _ercot_analysis_error:
                 st.error(f"Could not analyze the ERCOT capacity workbook: {_ercot_analysis_error}")
                 st.caption("Check that the workbook contains the expected five sheets and the project-data columns in I:R.")
+    elif selected_iso.startswith("DEC") or selected_iso.startswith("DEP"):
+        _duke_code = "DEC" if selected_iso.startswith("DEC") else "DEP"
+        _duke_name = "Duke Energy Carolinas" if _duke_code == "DEC" else "Duke Energy Progress"
+        _duke_map_url = (
+            "https://dec.poi-heatmap.duke-energy.app/"
+            if _duke_code == "DEC"
+            else "https://dep.poi-heatmap.duke-energy.app/"
+        )
+
+        st.markdown(
+            '<div style="border:1px solid #E7E0DB;border-radius:16px;padding:18px 20px;'
+            'background:linear-gradient(135deg,#FFFDFA 0%,#F7F3F0 100%);margin:6px 0 14px;">'
+            '<div style="font-size:12px;letter-spacing:1.4px;font-weight:800;color:#E8392D;">DUKE ENERGY · POI INTELLIGENCE</div>'
+            f'<div style="font-size:25px;line-height:1.2;font-weight:800;color:#050714;margin-top:5px;">{_duke_code} heatmap</div>'
+            f'<div style="font-size:14px;color:#45414A;margin-top:5px;">{_duke_name} · interactive point-of-interconnection screening</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        _duke_help_cols = st.columns(3)
+        with _duke_help_cols[0]:
+            st.markdown("**01 · Choose a scenario**")
+            st.caption("Use the map's Scenario dropdown and review each applicable study case for your resource type. The available capacity can vary by case.")
+        with _duke_help_cols[1]:
+            st.markdown("**02 · Explore a POI**")
+            st.caption("Select a point on the map and inspect its displayed capacity / limit information and any supporting metrics or legend available in the map.")
+        with _duke_help_cols[2]:
+            st.markdown("**03 · Screen, then verify**")
+            st.caption("Use results to prioritize further investigation—not to assume a substation connection is feasible or that capacity is reserved.")
+
+        st.markdown(f"#### Interactive { _duke_code } point-of-interconnection heatmap")
+        try:
+            st.components.v1.iframe(_duke_map_url, height=790, scrolling=True)
+        except Exception:
+            st.warning("The heatmap could not be embedded in this session. Use the direct-open link below.")
+        st.markdown(
+            f"[Open the { _duke_code } heatmap in a new tab]({_duke_map_url}) · "
+            "[Open the DEC / DEP heatmap user guide](https://www.oasis.oati.com/woa/docs/CPL/CPLdocs/User_Guide_-_CAR_POI_Heatmap_v0.pdf)"
+        )
+
+        st.markdown("#### What this selection means")
+        if _duke_code == "DEC":
+            st.markdown(
+                "You are viewing the **Duke Energy Carolinas (DEC)** transmission territory. "
+                "Use the map to compare modeled interconnection conditions across DEC points and scenarios before shortlisting candidate sites."
+            )
+        else:
+            st.markdown(
+                "You are viewing the **Duke Energy Progress (DEP)** transmission territory. "
+                "Use the map to compare modeled interconnection conditions across DEP points and scenarios before shortlisting candidate sites."
+            )
+
+        with st.expander("How to interpret the heatmap", expanded=True):
+            st.markdown("\n".join([
+                "- **Scenario first:** compare all study cases relevant to the proposed resource; a result from one scenario may not represent every project configuration.",
+                "- **Read the map legend and selected-point metrics together:** use the values and units shown in the map itself; do not infer a value from color alone.",
+                "- **Capacity is a planning-screening estimate:** this is not an interconnection approval, guaranteed export limit, or statement that an existing substation can accept the project without additional facilities.",
+                "- **BESS needs project-specific review:** the map does not replace analysis of tap / switching-station requirements, charging behavior, transmission upgrades, voltage, stability or other study constraints.",
+            ]))
+
+        st.info(
+            "Model currency: the published guide says the map is based on the most recently completed cluster-study phase and is updated within 30 days after a completed cluster study phase or restudy. Confirm the study-case date and assumptions in the map before making development decisions."
+        )
+        st.caption(
+            "This panel embeds the utility's interactive map. Sunstripe SELECT can explain the selected utility and how to read the map, but the map's internal point/scenario interactions occur inside the embedded tool and are not transmitted back to this page as structured data."
+        )
+
     else:
         st.info(
             f"The {selected_iso} interconnection heatmap is not connected yet. This market has its own panel ready for its map and queue visualization to be added later. "
