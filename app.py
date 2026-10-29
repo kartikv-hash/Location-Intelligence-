@@ -3850,497 +3850,593 @@ if selected_signal == "I":
                 st.error(f"Could not analyze the ERCOT capacity workbook: {_ercot_analysis_error}")
                 st.caption("Check that the workbook contains the expected five sheets and the project data columns in I:R.")
     elif selected_iso.startswith("DEC") or selected_iso.startswith("DEP"):
-        # Native DEC / DEP POI screening panel. Uses OpenStreetMap tiles and does
-        # not require a Carto API key, a third-party iframe, or a redirect.
+        # Native DEC / DEP POI workspace. Real capacity values are only shown
+        # when an authorized study dataset is loaded; no synthetic values are used.
         from html import escape as _duke_escape
+        from folium.plugins import Fullscreen, MeasureControl
 
         _duke_code = "DEC" if selected_iso.startswith("DEC") else "DEP"
         _duke_name = "Duke Energy Carolinas" if _duke_code == "DEC" else "Duke Energy Progress"
-        _duke_default_center = [35.55, -80.85] if _duke_code == "DEC" else [35.60, -78.65]
+        _duke_default_center = [35.45, -80.85] if _duke_code == "DEC" else [35.72, -78.75]
+        _duke_poi_upload_key = f"signal_duke_poi_upload_{_duke_code}"
+        _duke_constraint_upload_key = f"signal_duke_constraint_upload_{_duke_code}"
+        _duke_coordinate_upload_key = f"signal_duke_coordinate_upload_{_duke_code}"
 
-        st.markdown(
-            f'''<div style="border:1px solid #E7E0DB;border-radius:18px;padding:18px 22px;
-            background:linear-gradient(135deg,#FFFDFA 0%,#F7F3F0 100%);margin:6px 0 14px;
-            box-shadow:0 8px 24px rgba(5,7,20,0.05);">
-              <div style="font-size:11px;letter-spacing:1.5px;font-weight:800;color:#E8392D;">DUKE ENERGY · POI INTELLIGENCE</div>
-              <div style="font-size:27px;line-height:1.2;font-weight:800;color:#050714;margin-top:7px;">{_duke_code} point of interconnection map</div>
-              <div style="font-size:15px;color:#45414A;margin-top:6px;">{_duke_name}</div>
-              <div style="font-size:14px;line-height:1.65;color:#5B5660;margin-top:10px;">
-                Explore POI locations, compare reported capacity values, and inspect available constraint records directly in Sunstripe SELECT.
-                The base map does not need an API key. Import an authorized utility export to populate real POIs and study results.
-              </div>
-            </div>''',
-            unsafe_allow_html=True,
-        )
+        # Keep input styling local to this workspace so other SIGNAL sections are unchanged.
+        st.markdown(f"""
+        <style>
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stNumberInput"] input,
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stTextInput"] input {{
+            background:#fffdfb !important; color:#151515 !important; border-color:#d8d0c9 !important;
+        }}
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stSelectbox"] div[data-baseweb="select"] span {{color:#151515 !important;}}
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stFileUploader"] section {{background:#fffdfb !important;border:1px dashed #cfc5bd !important;}}
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stFileUploader"] section, 
+        .st-key-duke_poi_workspace_{_duke_code.lower()} [data-testid="stFileUploader"] section * {{color:#343039 !important;}}
+        .duke-help-card {{border:1px solid #e7e0db;border-radius:14px;padding:14px 16px;background:#fffdfb;height:100%;}}
+        .duke-help-step {{font-size:11px;letter-spacing:1px;font-weight:800;color:#e8392d;text-transform:uppercase;}}
+        .duke-help-title {{font-size:15px;font-weight:750;color:#111827;margin:5px 0 4px;}}
+        .duke-help-copy {{font-size:13px;line-height:1.5;color:#5e5861;}}
+        .duke-status {{border:1px solid #e7e0db;border-radius:12px;padding:12px 14px;background:#fffdfb;color:#26222a;margin:7px 0 12px;}}
+        .duke-status-title {{font-weight:750;font-size:14px;color:#18151a;margin-bottom:3px;}}
+        .duke-muted {{font-size:12px;color:#6b6570;line-height:1.55;}}
+        </style>
+        """, unsafe_allow_html=True)
 
-        _duke_c1, _duke_c2 = st.columns([1.05, 1.15], gap="medium")
-        with _duke_c1:
-            _duke_resource = st.selectbox(
-                "Resource type",
-                ["Solar generation", "Wind generation", "Battery storage"],
-                key=f"signal_duke_resource_{_duke_code}",
-                help="Used as context for screening. A change here does not recalculate utility study results.",
-            )
-        with _duke_c2:
-            _duke_injection_mw = st.number_input(
-                "Proposed injection / charging size (MW)",
-                min_value=0.0,
-                max_value=10000.0,
-                value=0.0,
-                step=5.0,
-                key=f"signal_duke_injection_{_duke_code}",
-                help="Optional screening threshold only. It does not run a power-flow or contingency study.",
-            )
-
-        st.markdown("##### Load the POI study data")
-        st.caption(
-            "No API key is required. Upload a locally saved, authorized DEC or DEP POI export to populate the map. "
-            "Supported formats are CSV, Excel, and GeoJSON. Without a data file, the interactive basemap still works, "
-            "but real POI capacity and constraint results cannot be shown."
-        )
-        _duke_poi_upload = st.file_uploader(
-            f"POI data file for {_duke_code} (optional; no API key required)",
-            type=["csv", "xlsx", "xls", "geojson", "json"],
-            key=f"signal_duke_poi_upload_{_duke_code}",
-            help="Use an authorized export containing POI names and latitude/longitude, or a GeoJSON with point geometries.",
-        )
-        _duke_constraint_upload = st.file_uploader(
-            "Optional separate constraints table",
-            type=["csv", "xlsx", "xls"],
-            key=f"signal_duke_constraint_upload_{_duke_code}",
-            help="Use this if the POI list and monitored-facility / contingency metrics are in separate files.",
-        )
-
-        _duke_df = None
-        _duke_constraints_df = None
-        _duke_geojson = None
-        _duke_load_error = None
-        _duke_sheet_names = []
-        _duke_all_sheets = {}
-
-        if _duke_poi_upload is not None:
-            try:
-                _duke_file_bytes = _duke_poi_upload.getvalue()
-                _duke_suffix = Path(_duke_poi_upload.name).suffix.lower()
-                if _duke_suffix == ".csv":
-                    _duke_df = pd.read_csv(io.BytesIO(_duke_file_bytes))
-                elif _duke_suffix in {".xlsx", ".xls"}:
-                    _duke_all_sheets = pd.read_excel(io.BytesIO(_duke_file_bytes), sheet_name=None)
-                    _duke_sheet_names = list(_duke_all_sheets.keys())
-                    if not _duke_sheet_names:
-                        raise ValueError("The workbook contains no readable worksheets.")
-                    _duke_norm_sheet = lambda x: re.sub(r"[^a-z0-9]", "", str(x).lower())
-                    _duke_poi_sheet_candidates = [
-                        name for name in _duke_sheet_names
-                        if any(k in _duke_norm_sheet(name) for k in ("poi", "bus", "capacity", "heatmap"))
-                        and "constraint" not in _duke_norm_sheet(name)
-                    ]
-                    _duke_default_sheet = _duke_poi_sheet_candidates[0] if _duke_poi_sheet_candidates else _duke_sheet_names[0]
-                    _duke_poi_sheet = st.selectbox(
-                        "Worksheet containing POI locations",
-                        _duke_sheet_names,
-                        index=_duke_sheet_names.index(_duke_default_sheet),
-                        key=f"signal_duke_poi_sheet_{_duke_code}",
-                    )
-                    _duke_df = _duke_all_sheets[_duke_poi_sheet].copy()
-                    _duke_constraint_sheets = [
-                        name for name in _duke_sheet_names
-                        if "constraint" in _duke_norm_sheet(name) or "monitoredfacility" in _duke_norm_sheet(name)
-                    ]
-                    if _duke_constraint_sheets:
-                        _duke_default_constraint_sheet = _duke_constraint_sheets[0]
-                        _duke_selected_constraint_sheet = st.selectbox(
-                            "Worksheet containing constraints",
-                            _duke_constraint_sheets,
-                            index=0,
-                            key=f"signal_duke_constraint_sheet_{_duke_code}",
-                        )
-                        _duke_constraints_df = _duke_all_sheets[_duke_selected_constraint_sheet].copy()
-                elif _duke_suffix in {".geojson", ".json"}:
-                    _duke_geojson = json.loads(_duke_file_bytes.decode("utf-8-sig"))
-                    _duke_features = _duke_geojson.get("features", []) if isinstance(_duke_geojson, dict) else []
-                    if not _duke_features:
-                        raise ValueError("The GeoJSON file has no features.")
-                    _duke_rows = []
-                    from shapely.geometry import shape as _duke_shape
-                    for _duke_i, _duke_feature in enumerate(_duke_features):
-                        _duke_row = dict(_duke_feature.get("properties") or {})
-                        _duke_geometry = _duke_feature.get("geometry")
-                        if not _duke_geometry:
-                            continue
-                        _duke_geom_obj = _duke_shape(_duke_geometry)
-                        if _duke_geom_obj.is_empty:
-                            continue
-                        _duke_point = _duke_geom_obj if _duke_geom_obj.geom_type == "Point" else _duke_geom_obj.representative_point()
-                        _duke_row["_sunstripe_map_lon"] = float(_duke_point.x)
-                        _duke_row["_sunstripe_map_lat"] = float(_duke_point.y)
-                        _duke_row.setdefault("Feature ID", _duke_feature.get("id", _duke_i + 1))
-                        _duke_rows.append(_duke_row)
-                    _duke_df = pd.DataFrame(_duke_rows)
-                    if _duke_df.empty:
-                        raise ValueError("No mappable geometries were found in the GeoJSON file.")
-            except Exception as _duke_exc:
-                _duke_load_error = str(_duke_exc)
-
-        if _duke_constraint_upload is not None:
-            try:
-                _duke_constraint_suffix = Path(_duke_constraint_upload.name).suffix.lower()
-                if _duke_constraint_suffix == ".csv":
-                    _duke_constraints_df = pd.read_csv(_duke_constraint_upload)
-                else:
-                    _duke_constraint_sheets_upload = pd.read_excel(_duke_constraint_upload, sheet_name=None)
-                    _duke_constraint_sheet_names_upload = list(_duke_constraint_sheets_upload)
-                    _duke_match_sheets = [n for n in _duke_constraint_sheet_names_upload if "constraint" in re.sub(r"[^a-z0-9]", "", n.lower())]
-                    _duke_chosen_upload_sheet = _duke_match_sheets[0] if _duke_match_sheets else _duke_constraint_sheet_names_upload[0]
-                    _duke_constraints_df = _duke_constraint_sheets_upload[_duke_chosen_upload_sheet].copy()
-            except Exception as _duke_exc:
-                st.warning(f"The separate constraints file could not be read: {_duke_exc}")
-
-        if _duke_load_error:
-            st.error(f"Could not read the uploaded POI file: {_duke_load_error}")
-
-        def _duke_norm_col(_value):
-            return re.sub(r"[^a-z0-9]", "", str(_value).lower())
-
-        def _duke_find_col(_frame, _exact=(), _contains=()):
-            if _frame is None or _frame.empty:
-                return None
-            _columns = list(_frame.columns)
-            _by_norm = {_duke_norm_col(_column): _column for _column in _columns}
-            for _alias in _exact:
-                if _duke_norm_col(_alias) in _by_norm:
-                    return _by_norm[_duke_norm_col(_alias)]
-            for _column in _columns:
-                _normed = _duke_norm_col(_column)
-                if any(_duke_norm_col(_term) in _normed for _term in _contains):
-                    return _column
-            return None
-
-        _duke_lat_col = _duke_find_col(_duke_df, _exact=("latitude", "lat", "_sunstripe_map_lat"), _contains=("latitude", "latitudedegrees"))
-        _duke_lon_col = _duke_find_col(_duke_df, _exact=("longitude", "lon", "lng", "_sunstripe_map_lon"), _contains=("longitude", "longitudedegrees"))
-        _duke_name_col = _duke_find_col(_duke_df, _exact=("POI", "POI Name", "Bus", "Bus Name", "Substation", "Name", "Node", "Point Name", "Feature ID"), _contains=("poiname", "busname", "substationname", "pointofinterconnection"))
-        _duke_scenario_col = _duke_find_col(_duke_df, _exact=("Scenario", "Study Scenario", "Case"), _contains=("scenario", "studycase"))
-        _duke_voltage_col = _duke_find_col(_duke_df, _exact=("kV", "Voltage", "Voltage kV"), _contains=("voltage", "nomkv"))
-        _duke_area_col = _duke_find_col(_duke_df, _exact=("Area", "Zone", "County", "State"), _contains=("area", "zone"))
-        _duke_bus_col = _duke_find_col(_duke_df, _exact=("Bus Number", "Bus No", "Bus ID", "Bus"), _contains=("busnumber", "busid"))
-
-        _duke_metric_columns = []
-        if _duke_df is not None and not _duke_df.empty:
-            for _duke_col in _duke_df.columns:
-                _duke_numeric = pd.to_numeric(_duke_df[_duke_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
-                if _duke_numeric.notna().sum() >= max(1, int(len(_duke_df) * 0.25)) and _duke_col not in {_duke_lat_col, _duke_lon_col}:
-                    _duke_metric_columns.append(_duke_col)
-        _duke_capacity_candidates = [
-            _column for _column in _duke_metric_columns
-            if any(_term in _duke_norm_col(_column) for _term in ("availablecapacity", "capacitymw", "availablemw", "mwavailable", "capacity"))
-        ]
-        _duke_default_metric = _duke_capacity_candidates[0] if _duke_capacity_candidates else (_duke_metric_columns[0] if _duke_metric_columns else None)
-
-        if _duke_df is not None and not _duke_df.empty:
-            _duke_df = _duke_df.copy().reset_index(drop=True)
-            _duke_df["_sunstripe_map_lat"] = pd.to_numeric(_duke_df[_duke_lat_col], errors="coerce") if _duke_lat_col else np.nan
-            _duke_df["_sunstripe_map_lon"] = pd.to_numeric(_duke_df[_duke_lon_col], errors="coerce") if _duke_lon_col else np.nan
-            _duke_valid_coords = _duke_df["_sunstripe_map_lat"].between(-90, 90) & _duke_df["_sunstripe_map_lon"].between(-180, 180)
-            _duke_df = _duke_df[_duke_valid_coords].copy().reset_index(drop=True)
-            if _duke_df.empty:
-                st.warning(
-                    "This file does not contain recognizable latitude and longitude columns or mappable GeoJSON features. "
-                    "Use latitude/longitude fields or upload GeoJSON with point geometries. The map below remains available without an API key."
-                )
-
-        # Scenario controls only become active when they reflect scenarios actually present in the uploaded data.
-        if _duke_df is not None and not _duke_df.empty and _duke_scenario_col:
-            _duke_scenario_values = sorted(_duke_df[_duke_scenario_col].dropna().astype(str).unique().tolist())
-            _duke_scenario_options = ["All scenarios"] + _duke_scenario_values
-            _duke_selected_scenario = st.selectbox(
-                "Study scenario",
-                _duke_scenario_options,
-                key=f"signal_duke_scenario_{_duke_code}",
-                help="Scenarios are read from the uploaded file; selecting one filters its actual records.",
-            )
-        else:
-            st.selectbox(
-                "Study scenario",
-                ["Upload a POI file to load study scenarios"],
-                disabled=True,
-                key=f"signal_duke_scenario_empty_{_duke_code}",
-                help="No scenario field is available until a source file is loaded.",
-            )
-            _duke_selected_scenario = "All scenarios"
-
-        if _duke_df is not None and not _duke_df.empty and _duke_metric_columns:
-            _duke_metric_default_index = _duke_metric_columns.index(_duke_default_metric) if _duke_default_metric in _duke_metric_columns else 0
-            _duke_metric_col = st.selectbox(
-                "Colour POIs by",
-                _duke_metric_columns,
-                index=_duke_metric_default_index,
-                key=f"signal_duke_metric_{_duke_code}",
-                help="Choose a numeric field in the source data. Capacity thresholds are shown only as a screening visual, not as a study result.",
-            )
-        else:
-            _duke_metric_col = None
-            st.selectbox(
-                "Colour POIs by",
-                ["Upload numeric POI data to enable shading"],
-                disabled=True,
-                key=f"signal_duke_metric_empty_{_duke_code}",
+        with st.container(key=f"duke_poi_workspace_{_duke_code.lower()}"):
+            st.markdown(
+                f'''<div style="border:1px solid #e7e0db;border-radius:18px;padding:20px 22px;
+                background:linear-gradient(125deg,#fffdfb 0%,#f7f3f0 100%);margin:6px 0 15px;
+                box-shadow:0 8px 24px rgba(5,7,20,.045);">
+                  <div style="font-size:11px;letter-spacing:1.5px;font-weight:800;color:#e8392d;">SUNSTRIPE SELECT · INTERCONNECTION</div>
+                  <div style="font-size:27px;line-height:1.2;font-weight:800;color:#111827;margin-top:6px;">{_duke_code} POI Explorer</div>
+                  <div style="font-size:14px;color:#514b55;margin-top:4px;">{_duke_name}</div>
+                  <div style="font-size:14px;line-height:1.6;color:#5e5861;margin-top:10px;max-width:1000px;">
+                    Explore the utility region, inspect study POIs, compare reported capacity fields, and review monitored facility constraints.
+                    The base map works without a map key. Real study results appear only when source data is provided.
+                  </div>
+                </div>''',
+                unsafe_allow_html=True,
             )
 
-        _duke_search = st.text_input(
-            "Search POI, bus, or area",
-            placeholder="Start typing a POI name or bus number",
-            key=f"signal_duke_search_{_duke_code}",
-        )
-        _duke_only_meets = st.checkbox(
-            "Show only points with reported metric at least my proposed MW",
-            value=False,
-            key=f"signal_duke_only_meets_{_duke_code}",
-            help="A simple numeric screen only. It does not recalculate constraints or establish connection feasibility.",
-        )
-
-        _duke_filtered = _duke_df.copy() if _duke_df is not None else pd.DataFrame()
-        if not _duke_filtered.empty:
-            if _duke_scenario_col and _duke_selected_scenario != "All scenarios":
-                _duke_filtered = _duke_filtered[_duke_filtered[_duke_scenario_col].astype(str) == _duke_selected_scenario].copy()
-            if _duke_search.strip():
-                _duke_search_mask = _duke_filtered.astype(str).apply(
-                    lambda _column: _column.str.contains(_duke_search.strip(), case=False, na=False, regex=False)
-                ).any(axis=1)
-                _duke_filtered = _duke_filtered[_duke_search_mask].copy()
-            if _duke_metric_col:
-                _duke_filtered["_sunstripe_metric_num"] = pd.to_numeric(
-                    _duke_filtered[_duke_metric_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce"
-                )
-                if _duke_only_meets and _duke_injection_mw > 0:
-                    _duke_filtered = _duke_filtered[_duke_filtered["_sunstripe_metric_num"] >= _duke_injection_mw].copy()
-            _duke_filtered = _duke_filtered.reset_index(drop=True)
-            _duke_filtered["_sunstripe_display_name"] = (
-                _duke_filtered[_duke_name_col].fillna("").astype(str).str.strip()
-                if _duke_name_col else ""
-            )
-            _duke_filtered.loc[_duke_filtered["_sunstripe_display_name"].eq(""), "_sunstripe_display_name"] = _duke_filtered.apply(
-                lambda _row: f"POI {_row.name + 1} · {_row['_sunstripe_map_lat']:.5f}, {_row['_sunstripe_map_lon']:.5f}", axis=1
-            )
-
-        # Summary cards use only the filtered source records; no capacity is generated or simulated.
-        if not _duke_filtered.empty:
-            _duke_k1, _duke_k2, _duke_k3 = st.columns(3)
-            _duke_k1.metric("POIs in view", f"{len(_duke_filtered):,}")
-            if _duke_metric_col:
-                _duke_vals = pd.to_numeric(_duke_filtered[_duke_metric_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce").dropna()
-                _duke_k2.metric("Median reported value", f"{_duke_vals.median():,.2f}" if not _duke_vals.empty else "Not available", help=f"Source field: {_duke_metric_col}")
-                _duke_k3.metric("Maximum reported value", f"{_duke_vals.max():,.2f}" if not _duke_vals.empty else "Not available", help=f"Source field: {_duke_metric_col}")
-            else:
-                _duke_k2.metric("Median reported value", "Not available")
-                _duke_k3.metric("Maximum reported value", "Not available")
-
-            _duke_select_options = list(range(len(_duke_filtered)))
-            _duke_selected_row_num = st.selectbox(
-                "Inspect a point of interconnection",
-                _duke_select_options,
-                format_func=lambda _idx: str(_duke_filtered.iloc[_idx]["_sunstripe_display_name"]),
-                key=f"signal_duke_selected_poi_{_duke_code}",
-            )
-            _duke_selected_row = _duke_filtered.iloc[int(_duke_selected_row_num)]
-            _duke_selected_lat = float(_duke_selected_row["_sunstripe_map_lat"])
-            _duke_selected_lon = float(_duke_selected_row["_sunstripe_map_lon"])
-        else:
-            _duke_selected_row = None
-            _duke_selected_lat = None
-            _duke_selected_lon = None
-
-        _duke_map_center = (
-            [_duke_selected_lat, _duke_selected_lon]
-            if _duke_selected_lat is not None
-            else (
-                [float(_duke_filtered["_sunstripe_map_lat"].mean()), float(_duke_filtered["_sunstripe_map_lon"].mean())]
-                if not _duke_filtered.empty else _duke_default_center
-            )
-        )
-        _duke_zoom = 9 if _duke_selected_lat is not None else (7 if not _duke_filtered.empty else 6)
-        _duke_map = folium.Map(
-            location=_duke_map_center,
-            zoom_start=_duke_zoom,
-            tiles="OpenStreetMap",
-            control_scale=True,
-            prefer_canvas=True,
-        )
-
-        if not _duke_filtered.empty:
-            def _duke_color(_val, _use_capacity_scale):
-                if pd.isna(_val):
-                    return "#89817B"
-                if _use_capacity_scale:
-                    if _val < 25: return "#F28C28"
-                    if _val < 50: return "#F4A641"
-                    if _val < 75: return "#F5D547"
-                    if _val < 100: return "#E5E8A5"
-                    if _val < 150: return "#B8D99B"
-                    if _val < 250: return "#62B36B"
-                    return "#159447"
-                _vals = pd.to_numeric(_duke_filtered[_duke_metric_col], errors="coerce") if _duke_metric_col else pd.Series(dtype=float)
-                _lo, _hi = _vals.min(), _vals.max()
-                if pd.isna(_val) or pd.isna(_lo) or pd.isna(_hi) or _lo == _hi:
-                    return "#159447"
-                _ratio = (_val - _lo) / (_hi - _lo)
-                return "#E8792E" if _ratio < .25 else ("#F4D34E" if _ratio < .5 else ("#8ACB88" if _ratio < .75 else "#159447"))
-
-            _duke_metric_norm = _duke_norm_col(_duke_metric_col or "")
-            _duke_use_capacity_scale = any(_term in _duke_metric_norm for _term in ("capacity", "mwavailable", "availablemw"))
-            for _duke_i, _duke_row in _duke_filtered.iterrows():
-                _duke_lat = float(_duke_row["_sunstripe_map_lat"])
-                _duke_lon = float(_duke_row["_sunstripe_map_lon"])
-                _duke_value = _duke_row.get("_sunstripe_metric_num", np.nan)
-                _duke_point_color = _duke_color(_duke_value, _duke_use_capacity_scale)
-                _duke_point_label = str(_duke_row.get("_sunstripe_display_name", f"POI {_duke_i + 1}"))
-                _duke_popup_lines = [f"<b>{_duke_escape(_duke_point_label)}</b>"]
-                for _duke_field in list(_duke_filtered.columns):
-                    if _duke_field.startswith("_sunstripe_") or _duke_field == _duke_name_col:
-                        continue
-                    _duke_cell = _duke_row.get(_duke_field)
-                    if pd.isna(_duke_cell) or str(_duke_cell).strip() == "":
-                        continue
-                    _duke_popup_lines.append(f"<b>{_duke_escape(str(_duke_field))}:</b> {_duke_escape(str(_duke_cell))}")
-                    if len(_duke_popup_lines) >= 8:
-                        break
-                _duke_is_selected = _duke_selected_row is not None and _duke_i == int(_duke_selected_row_num)
-                folium.CircleMarker(
-                    location=[_duke_lat, _duke_lon],
-                    radius=9 if _duke_is_selected else 6,
-                    color="#0757B8" if _duke_is_selected else _duke_point_color,
-                    weight=3 if _duke_is_selected else 1,
-                    fill=True,
-                    fill_color="#3A87D6" if _duke_is_selected else _duke_point_color,
-                    fill_opacity=0.92,
-                    tooltip=f"{_duke_escape(_duke_point_label)}" + (f" · {_duke_value:,.2f}" if pd.notna(_duke_value) else ""),
-                    popup=folium.Popup("<br>".join(_duke_popup_lines), max_width=360),
-                ).add_to(_duke_map)
-
-            if _duke_use_capacity_scale:
-                _duke_legend_html = '''<div style="position:fixed;bottom:24px;left:24px;z-index:9999;background:#fffdfb;border:1px solid #ded8d2;border-radius:12px;padding:10px 12px;box-shadow:0 3px 12px rgba(0,0,0,.12);font-size:11px;color:#171923;">
-                <div style="font-weight:800;margin-bottom:5px;">Reported capacity (MW)</div>
-                <div><span style="color:#F28C28;">●</span> &lt;25 &nbsp; <span style="color:#F4A641;">●</span> 25–50</div>
-                <div><span style="color:#F5D547;">●</span> 50–75 &nbsp; <span style="color:#B8D99B;">●</span> 100–150</div>
-                <div><span style="color:#62B36B;">●</span> 150–250 &nbsp; <span style="color:#159447;">●</span> &gt;250</div></div>'''
-                _duke_map.get_root().html.add_child(folium.Element(_duke_legend_html))
-            else:
-                _duke_legend_html = '''<div style="position:fixed;bottom:24px;left:24px;z-index:9999;background:#fffdfb;border:1px solid #ded8d2;border-radius:12px;padding:10px 12px;box-shadow:0 3px 12px rgba(0,0,0,.12);font-size:11px;color:#171923;"><div style="font-weight:800;margin-bottom:5px;">Selected numeric field</div><div><span style="color:#E8792E;">●</span> Lower values &nbsp; <span style="color:#F4D34E;">●</span> Mid-range</div><div><span style="color:#8ACB88;">●</span> Higher values</div></div>'''
-                _duke_map.get_root().html.add_child(folium.Element(_duke_legend_html))
-        else:
-            folium.Marker(
-                _duke_default_center,
-                tooltip=f"{_duke_code} service area view · no POI data loaded",
-                popup=f"{_duke_name}<br>Upload an authorized POI export to display real POI markers and values.",
-                icon=folium.Icon(color="blue", icon="info-sign"),
-            ).add_to(_duke_map)
-
-        folium.LayerControl(collapsed=True).add_to(_duke_map)
-        _duke_map_result = st_folium(
-            _duke_map,
-            width=None,
-            height=610,
-            key=f"signal_duke_native_map_{_duke_code}",
-            returned_objects=["last_clicked", "last_object_clicked"],
-        )
-        if _duke_map_result and _duke_map_result.get("last_clicked"):
-            _duke_clicked = _duke_map_result["last_clicked"]
-            st.caption(f"Map coordinate selected: {_duke_clicked.get('lat', 0):.6f}, {_duke_clicked.get('lng', 0):.6f}")
-
-        if _duke_filtered.empty:
-            st.info(
-                "The interactive map is working and does not require an API key. It currently shows the region only because no mappable POI dataset is loaded. "
-                "Upload an authorized export to display actual point markers, capacity shading, scenario filters, and record details."
-            )
-        else:
-            st.markdown("#### POI records")
-            st.caption("Values below are taken directly from the uploaded file. The marker colors are a visual guide; they do not establish interconnection feasibility.")
-            _duke_show_columns = []
-            for _duke_col in [_duke_name_col, _duke_bus_col, _duke_voltage_col, _duke_area_col, _duke_scenario_col, _duke_metric_col]:
-                if _duke_col and _duke_col in _duke_filtered.columns and _duke_col not in _duke_show_columns:
-                    _duke_show_columns.append(_duke_col)
-            for _duke_col in _duke_filtered.columns:
-                if _duke_col.startswith("_sunstripe_") or _duke_col in _duke_show_columns:
-                    continue
-                if len(_duke_show_columns) >= 10:
-                    break
-                _duke_show_columns.append(_duke_col)
-            st.dataframe(_duke_filtered[_duke_show_columns], use_container_width=True, hide_index=True, height=300)
-            st.download_button(
-                "Download filtered POI records (CSV)",
-                data=_duke_filtered[_duke_show_columns].to_csv(index=False).encode("utf-8"),
-                file_name=f"{_duke_code.lower()}_poi_records_filtered.csv",
-                mime="text/csv",
-                key=f"signal_duke_poi_download_{_duke_code}",
-            )
-
-            st.markdown("#### Selected POI details")
-            _duke_detail_cols = st.columns(3)
-            _duke_detail_cols[0].metric("POI / bus", str(_duke_selected_row.get(_duke_name_col, "Not available"))[:80] if _duke_name_col else str(_duke_selected_row.get("_sunstripe_display_name", "Not available")))
-            _duke_detail_cols[1].metric("Latitude", f"{_duke_selected_lat:.5f}")
-            _duke_detail_cols[2].metric("Longitude", f"{_duke_selected_lon:.5f}")
-            _duke_detail_pairs = []
-            for _duke_field, _duke_value in _duke_selected_row.items():
-                if str(_duke_field).startswith("_sunstripe_"):
-                    continue
-                if pd.isna(_duke_value) or str(_duke_value).strip() == "":
-                    continue
-                _duke_detail_pairs.append((_duke_field, _duke_value))
-            if _duke_detail_pairs:
-                _duke_detail_frame = pd.DataFrame(_duke_detail_pairs, columns=["Field", "Source value"])
-                st.dataframe(_duke_detail_frame, use_container_width=True, hide_index=True, height=min(420, 44 + 35 * len(_duke_detail_frame)))
-
-            if _duke_metric_col:
-                _duke_selected_metric = pd.to_numeric(pd.Series([_duke_selected_row.get(_duke_metric_col)]).astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce").iloc[0]
-                if pd.notna(_duke_selected_metric) and _duke_injection_mw > 0:
-                    if _duke_selected_metric >= _duke_injection_mw:
-                        st.success(f"The selected source metric ({_duke_selected_metric:,.2f}) is at least the entered project size ({_duke_injection_mw:,.2f} MW). This is a numeric screen only, not a network study or feasibility finding.")
-                    else:
-                        st.warning(f"The selected source metric ({_duke_selected_metric:,.2f}) is below the entered project size ({_duke_injection_mw:,.2f} MW). Review alternatives and the source metric definition; this is not a formal capacity determination.")
-
-        if _duke_constraints_df is not None and not _duke_constraints_df.empty:
-            st.markdown("#### Monitored facilities and constraint records")
-            st.caption("Constraint rows are shown as supplied by the source file. The app does not recalculate DFAX, loading, contingency impacts, or post-injection flows.")
-            _duke_constraint_poi_col = _duke_find_col(_duke_constraints_df, _exact=("POI", "POI Name", "Bus", "Bus Name", "Bus Number"), _contains=("poiname", "busname", "busnumber"))
-            _duke_constraints_view = _duke_constraints_df.copy()
-            if _duke_selected_row is not None and _duke_constraint_poi_col and _duke_name_col:
-                _duke_target_name = str(_duke_selected_row.get(_duke_name_col, "")).strip()
-                if _duke_target_name:
-                    _duke_linked = _duke_constraints_view[_duke_constraints_view[_duke_constraint_poi_col].astype(str).str.contains(_duke_target_name, case=False, na=False, regex=False)]
-                    if not _duke_linked.empty:
-                        _duke_constraints_view = _duke_linked
-                        st.caption(f"Showing constraint rows matched to {_duke_target_name}.")
-                    else:
-                        st.caption("No direct name match was found, so all rows from the uploaded constraints table are shown.")
-            st.dataframe(_duke_constraints_view, use_container_width=True, hide_index=True, height=350)
-            st.download_button(
-                "Download displayed constraint records (CSV)",
-                data=_duke_constraints_view.to_csv(index=False).encode("utf-8"),
-                file_name=f"{_duke_code.lower()}_constraint_records.csv",
-                mime="text/csv",
-                key=f"signal_duke_constraint_download_{_duke_code}",
-            )
-        elif _duke_df is not None and not _duke_df.empty:
-            _duke_constraint_like_cols = [
-                _duke_col for _duke_col in _duke_df.columns
-                if any(_term in _duke_norm_col(_duke_col) for _term in ("contingency", "monitoredfacility", "dfax", "loadingbefore", "loadingafter", "mwimpact", "percentimpact"))
+            _duke_step_cols = st.columns(3, gap="medium")
+            _duke_step_specs = [
+                ("Step 1", "Choose a project", "Select a resource type and enter the intended injection or charging MW."),
+                ("Step 2", "Explore the map", "Zoom into a POI, click a marker, and use the colour legend to compare the selected study metric."),
+                ("Step 3", "Verify constraints", "Review the source's scenario, monitored facilities and contingencies before prioritising a site."),
             ]
-            if _duke_constraint_like_cols:
-                st.markdown("#### Constraint fields included in the POI export")
-                st.dataframe(_duke_filtered[[c for c in _duke_constraint_like_cols if c in _duke_filtered.columns]], use_container_width=True, hide_index=True, height=260)
+            for _duke_col, (_duke_step, _duke_title, _duke_copy) in zip(_duke_step_cols, _duke_step_specs):
+                with _duke_col:
+                    st.markdown(
+                        f'<div class="duke-help-card"><div class="duke-help-step">{_duke_step}</div>'
+                        f'<div class="duke-help-title">{_duke_title}</div><div class="duke-help-copy">{_duke_copy}</div></div>',
+                        unsafe_allow_html=True,
+                    )
 
-        _duke_resource_note = {
-            "Solar generation": "For solar, use a generation scenario and compare the reported metrics across several POIs. Capacity alone does not account for all network constraints.",
-            "Wind generation": "For wind, compare generation scenarios and nearby POIs. Review the reported voltage, monitored facilities, and contingency impacts where available.",
-            "Battery storage": "For storage, charging and export can create different impacts. Compare the appropriate charging and generation scenarios separately; a single capacity value is not a full battery interconnection assessment.",
-        }[_duke_resource]
-        st.markdown("#### What the current view means")
-        st.write(_duke_resource_note)
-        st.warning(
-            "The map is an early screening tool. Reported POI capacity is modeled and scenario-specific; it is not reserved capacity or an interconnection approval. "
-            "The app does not calculate new power-flow, contingency, thermal, voltage, stability, or affected-system results from the entered MW value. "
-            "Use current utility study material and formal interconnection studies before making a siting decision."
-        )
-        st.caption("Basemap: OpenStreetMap contributors. No Carto API key or external map iframe is used for this DEC/DEP view.")
+            def _duke_norm_col(_value):
+                return re.sub(r"[^a-z0-9]", "", str(_value).lower())
+
+            def _duke_find_col(_frame, _exact=(), _contains=()):
+                if _frame is None or _frame.empty:
+                    return None
+                _columns = list(_frame.columns)
+                _by_norm = {_duke_norm_col(_column): _column for _column in _columns}
+                for _alias in _exact:
+                    if _duke_norm_col(_alias) in _by_norm:
+                        return _by_norm[_duke_norm_col(_alias)]
+                for _column in _columns:
+                    _normed = _duke_norm_col(_column)
+                    if any(_duke_norm_col(_term) in _normed for _term in _contains):
+                        return _column
+                return None
+
+            def _duke_read_uploaded_table(_upload, _sheet_name=None):
+                _suffix = Path(_upload.name).suffix.lower()
+                _bytes = _upload.getvalue()
+                if _suffix == ".csv":
+                    return pd.read_csv(io.BytesIO(_bytes))
+                if _suffix in {".xlsx", ".xls"}:
+                    _sheets = pd.read_excel(io.BytesIO(_bytes), sheet_name=None)
+                    if not _sheets:
+                        raise ValueError("The workbook has no readable worksheets.")
+                    if _sheet_name in _sheets:
+                        return _sheets[_sheet_name].copy()
+                    _first = next(iter(_sheets))
+                    return _sheets[_first].copy()
+                raise ValueError("Use CSV or Excel for tabular data.")
+
+            _duke_df = None
+            _duke_constraints_df = None
+            _duke_load_error = None
+            _duke_poi_geojson = None
+            _duke_workbook_sheets = {}
+            _duke_coord_lookup_df = None
+
+            _duke_expand_load = bool(st.session_state.get(_duke_poi_upload_key))
+            with st.expander("Load or update official POI study data", expanded=_duke_expand_load):
+                st.markdown(
+                    '<div class="duke-status"><div class="duke-status-title">No map key required</div>'
+                    '<div class="duke-muted">This upload is for the study data, not an API key. A base map alone cannot show Duke study capacity. '
+                    'Use an authorized POI export containing scenario values and geographic coordinates, or provide a separate coordinate lookup file.</div></div>',
+                    unsafe_allow_html=True,
+                )
+                _duke_poi_upload = st.file_uploader(
+                    "POI study data", type=["csv", "xlsx", "xls", "geojson", "json"],
+                    key=_duke_poi_upload_key,
+                    help="A GeoJSON with point geometries or a table with latitude and longitude is the most direct format.",
+                )
+
+                if _duke_poi_upload is not None:
+                    try:
+                        _duke_suffix = Path(_duke_poi_upload.name).suffix.lower()
+                        if _duke_suffix in {".geojson", ".json"}:
+                            _duke_poi_geojson = json.loads(_duke_poi_upload.getvalue().decode("utf-8-sig"))
+                            _duke_features = _duke_poi_geojson.get("features", []) if isinstance(_duke_poi_geojson, dict) else []
+                            _duke_geo_rows = []
+                            from shapely.geometry import shape as _duke_shape
+                            for _duke_i, _duke_feature in enumerate(_duke_features):
+                                _duke_row = dict(_duke_feature.get("properties") or {})
+                                _duke_geometry = _duke_feature.get("geometry")
+                                if not _duke_geometry:
+                                    continue
+                                _duke_geom_obj = _duke_shape(_duke_geometry)
+                                if _duke_geom_obj.is_empty:
+                                    continue
+                                _duke_point = _duke_geom_obj if _duke_geom_obj.geom_type == "Point" else _duke_geom_obj.representative_point()
+                                _duke_row["_sunstripe_map_lon"] = float(_duke_point.x)
+                                _duke_row["_sunstripe_map_lat"] = float(_duke_point.y)
+                                _duke_row.setdefault("Feature ID", _duke_feature.get("id", _duke_i + 1))
+                                _duke_geo_rows.append(_duke_row)
+                            _duke_df = pd.DataFrame(_duke_geo_rows)
+                            if _duke_df.empty:
+                                raise ValueError("No usable features were found in the GeoJSON.")
+                        elif _duke_suffix == ".csv":
+                            _duke_df = pd.read_csv(io.BytesIO(_duke_poi_upload.getvalue()))
+                        else:
+                            _duke_workbook_sheets = pd.read_excel(io.BytesIO(_duke_poi_upload.getvalue()), sheet_name=None)
+                            _duke_sheet_names = list(_duke_workbook_sheets.keys())
+                            if not _duke_sheet_names:
+                                raise ValueError("The workbook contains no readable worksheets.")
+                            _duke_sheet_norm = lambda _x: _duke_norm_col(_x)
+                            _duke_candidate_sheets = [
+                                _sheet for _sheet in _duke_sheet_names
+                                if any(_term in _duke_sheet_norm(_sheet) for _term in ("poi", "bus", "capacity", "heatmap"))
+                                and "constraint" not in _duke_sheet_norm(_sheet)
+                            ]
+                            _duke_default_sheet = _duke_candidate_sheets[0] if _duke_candidate_sheets else _duke_sheet_names[0]
+                            _duke_poi_sheet = st.selectbox(
+                                "Worksheet containing POI records", _duke_sheet_names,
+                                index=_duke_sheet_names.index(_duke_default_sheet), key=f"signal_duke_poi_sheet_{_duke_code}",
+                            )
+                            _duke_df = _duke_workbook_sheets[_duke_poi_sheet].copy()
+                            _duke_constraint_sheets = [
+                                _sheet for _sheet in _duke_sheet_names
+                                if "constraint" in _duke_sheet_norm(_sheet) or "monitoredfacility" in _duke_sheet_norm(_sheet)
+                            ]
+                            if _duke_constraint_sheets:
+                                _duke_constraint_sheet = st.selectbox(
+                                    "Worksheet containing constraints (optional)", _duke_constraint_sheets,
+                                    key=f"signal_duke_constraint_sheet_{_duke_code}",
+                                )
+                                _duke_constraints_df = _duke_workbook_sheets[_duke_constraint_sheet].copy()
+                    except Exception as _duke_exc:
+                        _duke_load_error = str(_duke_exc)
+
+                if _duke_load_error:
+                    st.error(f"Could not read the POI data file: {_duke_load_error}")
+
+                # If the POI table is not spatial, allow a join to a coordinate lookup keyed by bus or POI.
+                _duke_pre_lat = _duke_find_col(_duke_df, _exact=("latitude", "lat", "_sunstripe_map_lat"), _contains=("latitude", "latitudedegrees"))
+                _duke_pre_lon = _duke_find_col(_duke_df, _exact=("longitude", "lon", "lng", "_sunstripe_map_lon"), _contains=("longitude", "longitudedegrees"))
+                _duke_has_pre_coords = False
+                if _duke_df is not None and not _duke_df.empty and _duke_pre_lat and _duke_pre_lon:
+                    _duke_pre_lat_values = pd.to_numeric(_duke_df[_duke_pre_lat], errors="coerce")
+                    _duke_pre_lon_values = pd.to_numeric(_duke_df[_duke_pre_lon], errors="coerce")
+                    _duke_has_pre_coords = bool((
+                        _duke_pre_lat_values.between(-90, 90) & _duke_pre_lon_values.between(-180, 180)
+                    ).any())
+                if _duke_df is not None and not _duke_df.empty and not _duke_has_pre_coords:
+                    st.warning("This POI table has no usable map coordinates. Its study values can still be inspected, but map markers need latitude and longitude or a separate coordinate lookup.")
+                    _duke_coord_upload = st.file_uploader(
+                        "Optional POI coordinate lookup file", type=["csv", "xlsx", "xls"],
+                        key=_duke_coordinate_upload_key,
+                        help="Include a shared identifier such as Bus Number or POI Name plus Latitude and Longitude.",
+                    )
+                    if _duke_coord_upload is not None:
+                        try:
+                            _duke_coord_lookup_df = _duke_read_uploaded_table(_duke_coord_upload)
+                        except Exception as _duke_exc:
+                            st.error(f"Could not read the coordinate lookup: {_duke_exc}")
+
+                _duke_constraint_upload = st.file_uploader(
+                    "Optional separate monitored facility and contingency table", type=["csv", "xlsx", "xls"],
+                    key=_duke_constraint_upload_key,
+                )
+                if _duke_constraint_upload is not None:
+                    try:
+                        _duke_constraints_df = _duke_read_uploaded_table(_duke_constraint_upload)
+                    except Exception as _duke_exc:
+                        st.error(f"Could not read the constraints table: {_duke_exc}")
+
+                _duke_template = pd.DataFrame(columns=[
+                    "POI Name", "Bus Number", "Voltage (kV)", "Area", "Scenario",
+                    "Available Capacity (MW)", "Minimum Capacity (MW)", "Maximum Capacity (MW)", "Latitude", "Longitude",
+                ])
+                _duke_constraints_template = pd.DataFrame(columns=[
+                    "POI Name", "Bus Number", "Monitored Facility", "Contingency",
+                    "Available Capacity (MW)", "DFAX", "Before Loading (%)", "After Loading (%)",
+                ])
+                _duke_template_cols = st.columns(2)
+                _duke_template_cols[0].download_button(
+                    "Download POI column template", data=_duke_template.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{_duke_code.lower()}_poi_data_template.csv", mime="text/csv",
+                    key=f"signal_duke_template_{_duke_code}",
+                )
+                _duke_template_cols[1].download_button(
+                    "Download constraints template", data=_duke_constraints_template.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{_duke_code.lower()}_constraints_template.csv", mime="text/csv",
+                    key=f"signal_duke_constraints_template_{_duke_code}",
+                )
+
+            # Normalise the uploaded tables after the loader UI, keeping raw source fields intact.
+            _duke_lat_col = _duke_find_col(_duke_df, _exact=("latitude", "lat", "_sunstripe_map_lat"), _contains=("latitude", "latitudedegrees"))
+            _duke_lon_col = _duke_find_col(_duke_df, _exact=("longitude", "lon", "lng", "_sunstripe_map_lon"), _contains=("longitude", "longitudedegrees"))
+            _duke_name_col = _duke_find_col(_duke_df, _exact=("POI Name", "POI", "Bus Name", "Bus", "Substation", "Name", "Node", "Point Name", "Feature ID"), _contains=("poiname", "busname", "substationname", "pointofinterconnection"))
+            _duke_scenario_col = _duke_find_col(_duke_df, _exact=("Scenario", "Study Scenario", "Case"), _contains=("scenario", "studycase"))
+            _duke_voltage_col = _duke_find_col(_duke_df, _exact=("kV", "Voltage", "Voltage kV"), _contains=("voltage", "nomkv"))
+            _duke_area_col = _duke_find_col(_duke_df, _exact=("Area", "Zone", "County", "State"), _contains=("area", "zone"))
+            _duke_bus_col = _duke_find_col(_duke_df, _exact=("Bus Number", "Bus No", "Bus ID", "Bus"), _contains=("busnumber", "busid"))
+
+            # Join coordinate lookup on Bus Number first, then POI name, if the main table lacks coordinates.
+            if _duke_df is not None and not _duke_df.empty and not _duke_has_pre_coords and _duke_coord_lookup_df is not None and not _duke_coord_lookup_df.empty:
+                _duke_coord_lat_col = _duke_find_col(_duke_coord_lookup_df, _exact=("Latitude", "Lat"), _contains=("latitude", "latitudedegrees"))
+                _duke_coord_lon_col = _duke_find_col(_duke_coord_lookup_df, _exact=("Longitude", "Lon", "Lng"), _contains=("longitude", "longitudedegrees"))
+                _duke_main_key = _duke_bus_col or _duke_name_col
+                _duke_coord_key = _duke_find_col(_duke_coord_lookup_df, _exact=("Bus Number", "Bus No", "Bus ID", "POI Name", "POI", "Bus", "Name"), _contains=("busnumber", "busid", "poiname", "busname"))
+                if _duke_coord_lat_col and _duke_coord_lon_col and _duke_main_key and _duke_coord_key:
+                    _duke_lookup = _duke_coord_lookup_df.copy()
+                    _duke_lookup["_duke_join_key"] = _duke_lookup[_duke_coord_key].astype(str).str.strip().str.casefold()
+                    _duke_lookup = _duke_lookup.drop_duplicates("_duke_join_key").set_index("_duke_join_key")
+                    _duke_df = _duke_df.copy()
+                    _duke_df["_sunstripe_map_lat"] = _duke_df[_duke_main_key].astype(str).str.strip().str.casefold().map(pd.to_numeric(_duke_lookup[_duke_coord_lat_col], errors="coerce"))
+                    _duke_df["_sunstripe_map_lon"] = _duke_df[_duke_main_key].astype(str).str.strip().str.casefold().map(pd.to_numeric(_duke_lookup[_duke_coord_lon_col], errors="coerce"))
+                    _duke_lat_col, _duke_lon_col = "_sunstripe_map_lat", "_sunstripe_map_lon"
+
+            _duke_metric_columns = []
+            _duke_capacity_candidates = []
+            _duke_num_frame = pd.DataFrame()
+            if _duke_df is not None and not _duke_df.empty:
+                _duke_df = _duke_df.copy().reset_index(drop=True)
+                if _duke_lat_col and _duke_lon_col:
+                    _duke_df["_sunstripe_map_lat"] = pd.to_numeric(_duke_df[_duke_lat_col], errors="coerce")
+                    _duke_df["_sunstripe_map_lon"] = pd.to_numeric(_duke_df[_duke_lon_col], errors="coerce")
+                else:
+                    _duke_df["_sunstripe_map_lat"] = np.nan
+                    _duke_df["_sunstripe_map_lon"] = np.nan
+
+                _duke_valid_coords = _duke_df["_sunstripe_map_lat"].between(-90, 90) & _duke_df["_sunstripe_map_lon"].between(-180, 180)
+                # Don't let bus IDs, voltage, or coordinates become misleading heatmap metrics.
+                _duke_exclude_metric_tokens = ("latitude", "longitude", "busnumber", "busid", "objectid", "recordid", "zipcode", "postalcode", "voltage", "nomkv", "year", "month")
+                _duke_exact_identifier_columns = {"id", "uid", "objectid", "recordid", "facilityid", "projectid", "busid", "busnumber"}
+                for _duke_col in _duke_df.columns:
+                    _duke_normed = _duke_norm_col(_duke_col)
+                    if _duke_normed.startswith("sunstripe") or _duke_normed in _duke_exact_identifier_columns or any(_token in _duke_normed for _token in _duke_exclude_metric_tokens):
+                        continue
+                    _duke_numeric = pd.to_numeric(_duke_df[_duke_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce")
+                    if _duke_numeric.notna().sum() >= max(1, int(len(_duke_df) * 0.25)):
+                        _duke_metric_columns.append(_duke_col)
+                        _duke_num_frame[_duke_col] = _duke_numeric
+                _duke_capacity_candidates = [
+                    _column for _column in _duke_metric_columns
+                    if any(_term in _duke_norm_col(_column) for _term in ("availablecapacity", "availablemw", "mwavailable", "capacitymw", "capacity", "maximumcapacity", "maxcapacity"))
+                ]
+
+            _duke_metric_default = _duke_capacity_candidates[0] if _duke_capacity_candidates else (_duke_metric_columns[0] if _duke_metric_columns else None)
+
+            with st.container():
+                _duke_resource_col, _duke_mw_col = st.columns([1.2, 1], gap="medium")
+                with _duke_resource_col:
+                    _duke_resource = st.selectbox(
+                        "Resource type", ["Solar generation", "Wind generation", "Battery storage"],
+                        key=f"signal_duke_resource_{_duke_code}",
+                        help="For a battery, compare export and charging study cases separately when both are available in the source data.",
+                    )
+                with _duke_mw_col:
+                    _duke_injection_mw = st.number_input(
+                        "Project injection or charging size (MW)", min_value=0.0, max_value=10000.0,
+                        value=100.0, step=5.0, key=f"signal_duke_injection_{_duke_code}",
+                        help="Used only to compare the project size with a reported numeric field. It does not rerun a grid study.",
+                    )
+
+            _duke_resource_note = {
+                "Solar generation": "For solar, compare generation study cases and reported POI capacity. High capacity in one case does not guarantee the same result in another case.",
+                "Wind generation": "For wind, compare generation study cases and check nearby POIs plus the reported monitored facilities and contingencies.",
+                "Battery storage": "For storage, compare generation or export cases with charging or load cases separately. One number does not represent both directions of operation.",
+            }[_duke_resource]
+            st.caption(_duke_resource_note)
+
+            _duke_selected_scenario = "All scenarios"
+            if _duke_df is not None and not _duke_df.empty and _duke_scenario_col:
+                _duke_scenario_values = sorted(_duke_df[_duke_scenario_col].dropna().astype(str).unique().tolist())
+                _duke_scenario_options = ["All scenarios"] + _duke_scenario_values
+                _duke_scenario_signature = hashlib.sha1("|".join(_duke_scenario_options).encode("utf-8")).hexdigest()[:8]
+                _duke_default_scenario = next((s for s in _duke_scenario_options if s != "All scenarios" and (("generation" in s.lower()) if _duke_resource != "Battery storage" else any(t in s.lower() for t in ("generation", "charge", "load")))), "All scenarios")
+                _duke_filter_col1, _duke_filter_col2 = st.columns([1.2, 1.2], gap="medium")
+                with _duke_filter_col1:
+                    _duke_selected_scenario = st.selectbox(
+                        "Study scenario", _duke_scenario_options,
+                        index=_duke_scenario_options.index(_duke_default_scenario),
+                        key=f"signal_duke_scenario_v2_{_duke_code}_{_duke_scenario_signature}",
+                        help="The options are taken from the uploaded study data. No scenarios are fabricated.",
+                    )
+                with _duke_filter_col2:
+                    _duke_metric_options = ["No colour shading"] + _duke_metric_columns
+                    _duke_metric_signature = hashlib.sha1("|".join(_duke_metric_options).encode("utf-8")).hexdigest()[:8]
+                    _duke_metric_index = 1 + _duke_metric_columns.index(_duke_metric_default) if _duke_metric_default in _duke_metric_columns else 0
+                    _duke_metric_choice = st.selectbox(
+                        "Colour POIs by", _duke_metric_options, index=_duke_metric_index,
+                        key=f"signal_duke_metric_v2_{_duke_code}_{_duke_metric_signature}",
+                        help="Numeric fields come from the source file. Bus identifiers and voltage columns are excluded.",
+                    )
+                    _duke_metric_col = None if _duke_metric_choice == "No colour shading" else _duke_metric_choice
+            elif _duke_df is not None and not _duke_df.empty:
+                _duke_filter_col1, _duke_filter_col2 = st.columns([1.2, 1.2], gap="medium")
+                with _duke_filter_col1:
+                    st.markdown('<div class="duke-status"><div class="duke-status-title">Single scenario file</div><div class="duke-muted">No scenario column was found. The map will display all records in this file.</div></div>', unsafe_allow_html=True)
+                with _duke_filter_col2:
+                    _duke_metric_options = ["No colour shading"] + _duke_metric_columns
+                    _duke_metric_signature = hashlib.sha1("|".join(_duke_metric_options).encode("utf-8")).hexdigest()[:8]
+                    _duke_metric_index = 1 + _duke_metric_columns.index(_duke_metric_default) if _duke_metric_default in _duke_metric_columns else 0
+                    _duke_metric_choice = st.selectbox(
+                        "Colour POIs by", _duke_metric_options, index=_duke_metric_index,
+                        key=f"signal_duke_metric_v2_{_duke_code}_{_duke_metric_signature}",
+                        help="Numeric fields come from the source file. Bus identifiers and voltage columns are excluded.",
+                    )
+                    _duke_metric_col = None if _duke_metric_choice == "No colour shading" else _duke_metric_choice
+            else:
+                _duke_metric_col = None
+                st.markdown(
+                    '<div class="duke-status"><div class="duke-status-title">Study data not loaded</div>'
+                    '<div class="duke-muted">The map below is a regional geography view only. No POI markers or capacity values are shown until an authorized study dataset is loaded. This is not asking for an API key.</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+            _duke_search = st.text_input(
+                "Search POI, bus, or area", placeholder="Type a POI name, bus number, or area",
+                key=f"signal_duke_search_{_duke_code}",
+            ) if _duke_df is not None and not _duke_df.empty else ""
+            _duke_only_meets = False
+            if _duke_metric_col and _duke_df is not None and not _duke_df.empty:
+                _duke_only_meets = st.checkbox(
+                    "Show only records whose selected reported metric is at least my project MW",
+                    value=False, key=f"signal_duke_only_meets_{_duke_code}",
+                    help="A numeric screen only. It is not a confirmation of interconnection feasibility.",
+                )
+
+            _duke_filtered = _duke_df.copy() if _duke_df is not None else pd.DataFrame()
+            if not _duke_filtered.empty:
+                if _duke_scenario_col and _duke_selected_scenario != "All scenarios":
+                    _duke_filtered = _duke_filtered[_duke_filtered[_duke_scenario_col].astype(str) == _duke_selected_scenario].copy()
+                if _duke_search.strip():
+                    _duke_search_mask = _duke_filtered.astype(str).apply(
+                        lambda _column: _column.str.contains(_duke_search.strip(), case=False, na=False, regex=False)
+                    ).any(axis=1)
+                    _duke_filtered = _duke_filtered[_duke_search_mask].copy()
+                if _duke_metric_col:
+                    _duke_filtered["_sunstripe_metric_num"] = pd.to_numeric(
+                        _duke_filtered[_duke_metric_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce"
+                    )
+                    if _duke_only_meets and _duke_injection_mw > 0:
+                        _duke_filtered = _duke_filtered[_duke_filtered["_sunstripe_metric_num"] >= _duke_injection_mw].copy()
+                _duke_filtered = _duke_filtered.reset_index(drop=True)
+                _duke_filtered["_sunstripe_display_name"] = (
+                    _duke_filtered[_duke_name_col].fillna("").astype(str).str.strip() if _duke_name_col else ""
+                )
+                _duke_filtered.loc[_duke_filtered["_sunstripe_display_name"].eq(""), "_sunstripe_display_name"] = _duke_filtered.apply(
+                    lambda _row: f"POI {_row.name + 1}", axis=1
+                )
+
+            _duke_map_rows = pd.DataFrame()
+            if not _duke_filtered.empty:
+                _duke_map_rows = _duke_filtered[
+                    _duke_filtered["_sunstripe_map_lat"].between(-90, 90)
+                    & _duke_filtered["_sunstripe_map_lon"].between(-180, 180)
+                ].copy()
+            _duke_has_mappable_rows = not _duke_map_rows.empty
+
+            if not _duke_filtered.empty:
+                _duke_map_cols = st.columns(3, gap="small")
+                _duke_map_cols[0].metric("POI records", f"{len(_duke_filtered):,}")
+                _duke_map_cols[1].metric("POIs mapped", f"{len(_duke_map_rows):,}")
+                if _duke_metric_col:
+                    _duke_vals = pd.to_numeric(_duke_filtered[_duke_metric_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce").dropna()
+                    _duke_map_cols[2].metric("Median reported value", f"{_duke_vals.median():,.2f}" if not _duke_vals.empty else "Not reported", help=f"Source field: {_duke_metric_col}")
+                else:
+                    _duke_map_cols[2].metric("Project size", f"{_duke_injection_mw:,.0f} MW")
+
+                if _duke_has_mappable_rows:
+                    _duke_focus_options = [-1] + list(range(len(_duke_map_rows)))
+                    _duke_focus_signature = hashlib.sha1(
+                        "|".join(
+                            f"{row.get('_sunstripe_display_name','')}:{row.get('_sunstripe_map_lat','')}:{row.get('_sunstripe_map_lon','')}"
+                            for _, row in _duke_map_rows.iterrows()
+                        ).encode("utf-8")
+                    ).hexdigest()[:8]
+                    _duke_focus_idx = st.selectbox(
+                        "Focus map on", _duke_focus_options,
+                        format_func=lambda _idx: "All POIs · fit to all locations" if _idx == -1 else str(_duke_map_rows.iloc[_idx]["_sunstripe_display_name"]),
+                        key=f"signal_duke_selected_poi_v2_{_duke_code}_{_duke_focus_signature}",
+                        help="The default shows all mappable POIs. Choose one record to zoom in and inspect its details.",
+                    )
+                    _duke_selected_row = _duke_map_rows.iloc[int(_duke_focus_idx)] if _duke_focus_idx >= 0 else None
+                else:
+                    _duke_selected_row = None
+            else:
+                _duke_selected_row = None
+
+            _duke_selected_lat = float(_duke_selected_row["_sunstripe_map_lat"]) if _duke_selected_row is not None else None
+            _duke_selected_lon = float(_duke_selected_row["_sunstripe_map_lon"]) if _duke_selected_row is not None else None
+            if _duke_selected_lat is not None and _duke_selected_lon is not None:
+                _duke_map_center, _duke_zoom = [_duke_selected_lat, _duke_selected_lon], 9
+            elif _duke_has_mappable_rows:
+                _duke_map_center = [float(_duke_map_rows["_sunstripe_map_lat"].mean()), float(_duke_map_rows["_sunstripe_map_lon"].mean())]
+                _duke_zoom = 7
+            else:
+                _duke_map_center, _duke_zoom = _duke_default_center, 7
+
+            _duke_map = folium.Map(
+                location=_duke_map_center, zoom_start=_duke_zoom, tiles="OpenStreetMap",
+                control_scale=True, prefer_canvas=True, min_zoom=5, max_zoom=14,
+            )
+            Fullscreen(position="topright", title="Expand map", title_cancel="Exit fullscreen").add_to(_duke_map)
+            MeasureControl(position="topleft", primary_length_unit="kilometers", secondary_length_unit="miles").add_to(_duke_map)
+
+            if _duke_has_mappable_rows:
+                if len(_duke_map_rows) > 1 and _duke_selected_lat is None:
+                    _duke_map.fit_bounds(
+                        [[float(_duke_map_rows["_sunstripe_map_lat"].min()), float(_duke_map_rows["_sunstripe_map_lon"].min())],
+                         [float(_duke_map_rows["_sunstripe_map_lat"].max()), float(_duke_map_rows["_sunstripe_map_lon"].max())]],
+                        padding=(24, 24), max_zoom=9,
+                    )
+
+                _duke_metric_values = pd.to_numeric(_duke_map_rows[_duke_metric_col].astype(str).str.replace(r"[$,]", "", regex=True), errors="coerce") if _duke_metric_col else pd.Series(dtype=float)
+                _duke_metric_norm = _duke_norm_col(_duke_metric_col or "")
+                _duke_use_capacity_scale = any(_term in _duke_metric_norm for _term in ("availablecapacity", "availablemw", "mwavailable", "capacitymw", "capacity"))
+                _duke_q = _duke_metric_values.quantile([0.2, 0.4, 0.6, 0.8]).tolist() if not _duke_metric_values.dropna().empty else []
+
+                def _duke_color(_value):
+                    if pd.isna(_value):
+                        return "#8b8790"
+                    if _duke_use_capacity_scale:
+                        if _value < 25: return "#e97b32"
+                        if _value < 50: return "#f3a444"
+                        if _value < 75: return "#f2ce4b"
+                        if _value < 100: return "#dce49a"
+                        if _value < 150: return "#acd49a"
+                        if _value < 250: return "#68b978"
+                        return "#16864c"
+                    if len(_duke_q) < 4: return "#2474b5"
+                    if _value <= _duke_q[0]: return "#e87932"
+                    if _value <= _duke_q[1]: return "#f3c84b"
+                    if _value <= _duke_q[2]: return "#a7d39b"
+                    if _value <= _duke_q[3]: return "#58b476"
+                    return "#16794a"
+
+                for _duke_i, _duke_row in _duke_map_rows.iterrows():
+                    _duke_lat = float(_duke_row["_sunstripe_map_lat"])
+                    _duke_lon = float(_duke_row["_sunstripe_map_lon"])
+                    _duke_value = _duke_row.get("_sunstripe_metric_num", np.nan) if _duke_metric_col else np.nan
+                    _duke_label = str(_duke_row.get("_sunstripe_display_name", f"POI {_duke_i + 1}"))
+                    _duke_color_value = _duke_color(_duke_value) if _duke_metric_col else "#1f6eb5"
+                    _duke_is_selected = _duke_selected_row is not None and _duke_label == str(_duke_selected_row.get("_sunstripe_display_name", ""))
+                    _duke_popup = [f"<div style='min-width:190px'><b>{_duke_escape(_duke_label)}</b>"]
+                    for _duke_field in list(_duke_map_rows.columns):
+                        if str(_duke_field).startswith("_sunstripe_") or _duke_field == _duke_name_col:
+                            continue
+                        _duke_cell = _duke_row.get(_duke_field)
+                        if _duke_cell is None or (isinstance(_duke_cell, (float, np.floating)) and pd.isna(_duke_cell)) or str(_duke_cell).strip() == "":
+                            continue
+                        _duke_popup.append(f"<br><b>{_duke_escape(str(_duke_field))}:</b> {_duke_escape(str(_duke_cell))}")
+                        if len(_duke_popup) >= 7: break
+                    _duke_popup.append("</div>")
+                    folium.CircleMarker(
+                        location=[_duke_lat, _duke_lon], radius=9 if _duke_is_selected else 6,
+                        color="#0b4c8c" if _duke_is_selected else _duke_color_value,
+                        weight=3 if _duke_is_selected else 1,
+                        fill=True, fill_color="#2f82c8" if _duke_is_selected else _duke_color_value,
+                        fill_opacity=0.88,
+                        tooltip=_duke_label + (f" · {_duke_value:,.2f}" if pd.notna(_duke_value) else ""),
+                        popup=folium.Popup("".join(_duke_popup), max_width=380),
+                    ).add_to(_duke_map)
+
+                if _duke_metric_col:
+                    if _duke_use_capacity_scale:
+                        _duke_legend = '''<div style="position:fixed;bottom:24px;left:24px;z-index:9999;background:#fffdfb;border:1px solid #ded8d2;border-radius:12px;padding:10px 12px;box-shadow:0 3px 12px rgba(0,0,0,.12);font-size:11px;color:#171923;line-height:1.65"><b>Reported capacity (MW)</b><br><span style="color:#e97b32">●</span> &lt;25 &nbsp; <span style="color:#f3a444">●</span> 25 to 50<br><span style="color:#f2ce4b">●</span> 50 to 75 &nbsp; <span style="color:#dce49a">●</span> 75 to 100<br><span style="color:#acd49a">●</span> 100 to 150<br><span style="color:#68b978">●</span> 150 to 250 &nbsp; <span style="color:#16864c">●</span> &gt;250</div>'''
+                    else:
+                        _duke_legend = '''<div style="position:fixed;bottom:24px;left:24px;z-index:9999;background:#fffdfb;border:1px solid #ded8d2;border-radius:12px;padding:10px 12px;box-shadow:0 3px 12px rgba(0,0,0,.12);font-size:11px;color:#171923;line-height:1.65"><b>Relative value · selected field</b><br><span style="color:#e87932">●</span> Lower &nbsp; <span style="color:#f3c84b">●</span> Low to mid<br><span style="color:#a7d39b">●</span> Mid to high &nbsp; <span style="color:#16794a">●</span> Higher</div>'''
+                    _duke_map.get_root().html.add_child(folium.Element(_duke_legend))
+            # With no source coordinates, show a clean regional map without invented POI pins
+            # or approximate service-territory boundaries.
+
+            st.markdown("#### Interactive POI map")
+            if _duke_has_mappable_rows:
+                st.caption(f"Showing {len(_duke_filtered):,} filtered source records with coordinates. Select a point to inspect its source fields. Map colours are based on {_duke_metric_col or 'no selected numeric field'}.")
+            elif _duke_df is not None and not _duke_df.empty:
+                st.warning("Your file loaded, but its records do not have usable coordinates. Open Load or update official POI study data and add a coordinate lookup file to plot these records. The table and numeric fields can still be reviewed below.")
+            else:
+                st.info("Regional context only. No POI pins or capacity heatmap are displayed because no source study dataset is loaded. Open Load or update official POI study data when you have an authorized export.")
+
+            _duke_map_result = st_folium(
+                _duke_map, width=None, height=565,
+                key=f"signal_duke_native_map_v3_{_duke_code}",
+                returned_objects=["last_clicked", "last_object_clicked"],
+            )
+            if _duke_map_result and _duke_map_result.get("last_clicked"):
+                _duke_clicked = _duke_map_result["last_clicked"]
+                st.caption(f"Map coordinate selected: {_duke_clicked.get('lat', 0):.5f}, {_duke_clicked.get('lng', 0):.5f}. Click a POI marker to read its attributes.")
+
+            if _duke_df is not None and not _duke_df.empty:
+                st.markdown("#### POI records and screening summary")
+                if not _duke_filtered.empty:
+                    _duke_show_columns = []
+                    for _duke_col in [_duke_name_col, _duke_bus_col, _duke_voltage_col, _duke_area_col, _duke_scenario_col, _duke_metric_col, _duke_lat_col, _duke_lon_col]:
+                        if _duke_col and _duke_col in _duke_filtered.columns and _duke_col not in _duke_show_columns:
+                            _duke_show_columns.append(_duke_col)
+                    for _duke_col in _duke_filtered.columns:
+                        if _duke_col.startswith("_sunstripe_") or _duke_col in _duke_show_columns:
+                            continue
+                        if len(_duke_show_columns) >= 12: break
+                        _duke_show_columns.append(_duke_col)
+                    st.dataframe(_duke_filtered[_duke_show_columns], use_container_width=True, hide_index=True, height=310)
+                    st.download_button(
+                        "Download filtered POI records as CSV",
+                        data=_duke_filtered[_duke_show_columns].to_csv(index=False).encode("utf-8"),
+                        file_name=f"{_duke_code.lower()}_poi_records_filtered.csv", mime="text/csv",
+                        key=f"signal_duke_poi_download_v2_{_duke_code}",
+                    )
+                    if _duke_selected_row is not None:
+                        with st.expander("Selected POI details", expanded=True):
+                            _duke_detail_cols = st.columns(3)
+                            _duke_detail_cols[0].metric("POI or bus", str(_duke_selected_row.get(_duke_name_col, "Not available"))[:70] if _duke_name_col else str(_duke_selected_row.get("_sunstripe_display_name", "Not available")))
+                            _duke_detail_cols[1].metric("Latitude", f"{_duke_selected_lat:.5f}" if _duke_selected_lat is not None else "Not available")
+                            _duke_detail_cols[2].metric("Longitude", f"{_duke_selected_lon:.5f}" if _duke_selected_lon is not None else "Not available")
+                            _duke_detail_pairs = []
+                            for _duke_field, _duke_value in _duke_selected_row.items():
+                                if str(_duke_field).startswith("_sunstripe_"):
+                                    continue
+                                if _duke_value is None or (isinstance(_duke_value, (float, np.floating)) and pd.isna(_duke_value)) or str(_duke_value).strip() == "":
+                                    continue
+                                _duke_detail_pairs.append((_duke_field, _duke_value))
+                            if _duke_detail_pairs:
+                                st.dataframe(pd.DataFrame(_duke_detail_pairs, columns=["Source field", "Source value"]), use_container_width=True, hide_index=True, height=min(360, 45 + 32 * len(_duke_detail_pairs)))
+
+                if _duke_constraints_df is not None and not _duke_constraints_df.empty:
+                    st.markdown("#### Monitored facilities and constraints")
+                    st.caption("These fields are presented as supplied. Sunstripe SELECT does not recalculate DFAX, loading, contingency, or post injection values.")
+                    _duke_constraint_poi_col = _duke_find_col(_duke_constraints_df, _exact=("POI", "POI Name", "Bus", "Bus Name", "Bus Number"), _contains=("poiname", "busname", "busnumber"))
+                    _duke_constraints_view = _duke_constraints_df.copy()
+                    if _duke_selected_row is not None and _duke_constraint_poi_col:
+                        _duke_target_value = str(_duke_selected_row.get(_duke_bus_col, "")).strip() if _duke_bus_col else ""
+                        if not _duke_target_value and _duke_name_col:
+                            _duke_target_value = str(_duke_selected_row.get(_duke_name_col, "")).strip()
+                        if _duke_target_value:
+                            _duke_linked = _duke_constraints_view[_duke_constraints_view[_duke_constraint_poi_col].astype(str).str.contains(_duke_target_value, case=False, na=False, regex=False)]
+                            if not _duke_linked.empty:
+                                _duke_constraints_view = _duke_linked
+                                st.caption(f"Showing constraint rows associated with {_duke_target_value}.")
+                    st.dataframe(_duke_constraints_view, use_container_width=True, hide_index=True, height=280)
+                    st.download_button(
+                        "Download displayed constraints as CSV", data=_duke_constraints_view.to_csv(index=False).encode("utf-8"),
+                        file_name=f"{_duke_code.lower()}_constraint_records.csv", mime="text/csv",
+                        key=f"signal_duke_constraint_download_v2_{_duke_code}",
+                    )
+
+            st.warning(
+                "Use this as an early screening aid only. Reported values are scenario specific model results, not reserved capacity or an interconnection approval. "
+                "Confirm the study vintage, resource type, injection or charging direction, monitored facilities, contingencies, and upgrade assumptions before making a siting decision."
+            )
+            st.caption("Basemap: OpenStreetMap contributors. The map itself uses no API key. Actual utility POI and constraint data must come from an authorized source export or approved data connection.")
 
     else:
         st.info(
