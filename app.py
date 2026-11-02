@@ -35,6 +35,125 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ============================================================
+# SUNSTRIPE SELECT — ADMIN-APPROVED LOGIN
+# Add approved users through Streamlit Secrets.
+# Passwords are stored as salted PBKDF2 hashes.
+# ============================================================
+
+import hmac
+
+_AUTH_ITERATIONS = 600_000
+
+
+def _verify_user_password(email, password):
+    """Verify an approved email and its salted password hash."""
+    try:
+        approved_users = st.secrets.get("approved_users", {})
+        stored_value = approved_users.get(email.strip().lower())
+
+        if not stored_value:
+            return False
+
+        salt_hex, stored_hash = str(stored_value).split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+
+        calculated_hash = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            _AUTH_ITERATIONS,
+        ).hex()
+
+        return hmac.compare_digest(calculated_hash, stored_hash)
+
+    except Exception:
+        return False
+
+
+# Initialize authentication state for this Streamlit session.
+if "sunstripe_authenticated" not in st.session_state:
+    st.session_state.sunstripe_authenticated = False
+
+if "sunstripe_user_email" not in st.session_state:
+    st.session_state.sunstripe_user_email = ""
+
+
+# Show login screen until an approved user signs in.
+if not st.session_state.sunstripe_authenticated:
+
+    st.markdown(
+        """
+        <div style="text-align:center; padding-top:65px;">
+            <div style="font-size:36px; font-weight:800; color:#050714;">
+                Sunstripe <span style="color:#E8392D;">SELECT</span>
+            </div>
+            <div style="font-size:15px; color:#777; margin-top:8px;">
+                Know Where To Build
+            </div>
+            <div style="font-size:22px; font-weight:700; margin-top:42px;">
+                Secure Platform Access
+            </div>
+            <div style="font-size:14px; color:#777; margin-top:8px;">
+                Sign in using your approved credentials.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _, login_col, _ = st.columns([1, 1.2, 1])
+
+    with login_col:
+        with st.form("sunstripe_login_form"):
+            email = st.text_input(
+                "Email address",
+                placeholder="name@company.com",
+            ).strip().lower()
+
+            password = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Enter your password",
+            )
+
+            submitted = st.form_submit_button(
+                "Sign In",
+                use_container_width=True,
+                type="primary",
+            )
+
+        if submitted:
+            if _verify_user_password(email, password):
+                st.session_state.sunstripe_authenticated = True
+                st.session_state.sunstripe_user_email = email
+                st.rerun()
+            else:
+                st.error("Invalid credentials or access has not been approved.")
+
+        st.caption(
+            "Access is restricted to users approved by the Sunstripe administrator."
+        )
+
+    st.stop()
+
+
+# Logout control for authenticated users.
+with st.sidebar:
+    st.caption(
+        f"Signed in as: {st.session_state.sunstripe_user_email}"
+    )
+
+    if st.button("Log out", use_container_width=True):
+        st.session_state.sunstripe_authenticated = False
+        st.session_state.sunstripe_user_email = ""
+        st.rerun()
+
+
+# ============================================================
+# END OF LOGIN SYSTEM
+# ============================================================
+
 BG = "#FBF9F7"
 NAVY = "#050714"
 RED = "#E8392D"
