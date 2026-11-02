@@ -3285,26 +3285,26 @@ if selected_signal == "G":
         st.info("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the external grid map below remains available.")
 
     st.markdown("### U.S. substation map")
-    # Display only the map portion of the MapScaping page. The wrapper clips the
-    # publisher's page header/article content; the embedded map remains interactive.
+    # Crop the MapScaping page to the map canvas only. Its right-hand related-post
+    # sidebar and all article content sit outside this fixed map viewport.
     _substation_page_url = (
         "https://mapscaping.com/find-electrical-substations-near-me-interactive-map/"
-        "#lat=32.3422&lng=-98.9786&z=6"
+        "#lat=33.3787&lng=-98.2178&z=9"
     )
     st.components.v1.html(
         f"""
-        <div style="width:100%;height:760px;overflow:hidden;position:relative;">
+        <div style="width:930px;max-width:100%;height:560px;overflow:hidden;position:relative;margin:0;padding:0;">
           <iframe src="{_substation_page_url}"
             title="U.S. electrical substation map"
-            style="position:absolute;left:0;top:-300px;width:100%;height:1120px;"
-            loading="lazy" allowfullscreen></iframe>
+            style="position:absolute;left:0;top:-300px;width:1300px;height:1120px;"
+            loading="lazy" allowfullscreen scrolling="no"></iframe>
         </div>
         """,
-        height=760,
+        height=560,
         scrolling=False,
     )
     st.caption(
-        "Map view only. Substation locations and attributes are sourced by MapScaping from HIFLD; "
+        "Substation locations and attributes are sourced by MapScaping from HIFLD; "
         "this is a screening reference, not available interconnection capacity."
     )
 
@@ -3313,10 +3313,23 @@ if selected_signal == "G":
         "https://www.arcgis.com/apps/mapviewer/index.html"
         "?layers=d77284d1a97a426eaf960bab4764999c"
     )
+    st.markdown(
+        "<div style='border:1px solid #E7E0DB;border-radius:10px;overflow:hidden;"
+        "background:#FFFDFA;padding:6px;'>",
+        unsafe_allow_html=True,
+    )
     st.components.v1.iframe(
         src=_hifld_transmission_url,
         height=820,
         scrolling=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"[Open the HIFLD transmission line map in a new tab]({_hifld_transmission_url})"
+    )
+    st.caption(
+        "Feature information and pop-ups depend on the attributes available in the HIFLD map layer. "
+        "This is a screening reference and does not establish available transfer capacity."
     )
 
     # ERCOT nodal workspace is an isolated companion module. It is rendered only
