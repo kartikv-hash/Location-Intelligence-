@@ -3282,30 +3282,219 @@ if selected_signal == "G":
             "Displayed geometries and voltage labels reflect the supplied dataset; they do not establish available transfer capacity."
         )
     else:
-        st.info("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the external grid map below remains available.")
+        st.caption("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the HIFLD transmission line map below remains available.")
 
     st.markdown("### U.S. substation map")
-    # Crop the MapScaping page to the map canvas only. Its right-hand related-post
-    # sidebar and all article content sit outside this fixed map viewport.
-    _substation_page_url = (
-        "https://mapscaping.com/find-electrical-substations-near-me-interactive-map/"
-        "#lat=33.3787&lng=-98.2178&z=9"
-    )
+    # Standalone map component: no MapScaping article, banner, sidebar, or page content.
+    # The live HIFLD-derived ArcGIS feature layer is rendered directly in Leaflet.
     st.components.v1.html(
-        f"""
-        <div style="width:930px;max-width:100%;height:560px;overflow:hidden;position:relative;margin:0;padding:0;">
-          <iframe src="{_substation_page_url}"
-            title="U.S. electrical substation map"
-            style="position:absolute;left:0;top:-300px;width:1300px;height:1120px;"
-            loading="lazy" allowfullscreen scrolling="no"></iframe>
-        </div>
+        r"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+          <style>
+            html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; font-family:Arial,sans-serif; }
+            #map { width:100%; height:650px; background:#e9eff2; border:1px solid #d6dce2; border-radius:10px; }
+            .leaflet-container { font:12px Arial,sans-serif; }
+            .map-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 12px; background:rgba(255,255,255,.97); border:1px solid #d8dee6; border-radius:9px; box-shadow:0 2px 12px rgba(16,30,54,.16); max-width:min(680px, calc(100vw - 72px)); }
+            .map-toolbar .map-title { font-size:13px; font-weight:700; letter-spacing:.04em; color:#17263f; margin-right:4px; white-space:nowrap; }
+            .map-toolbar input, .map-toolbar select { height:34px; border:1px solid #cbd3dd; border-radius:6px; padding:0 9px; color:#18263d; background:#fff; font-size:12px; min-width:120px; }
+            .map-toolbar input { width:235px; min-width:150px; }
+            .map-toolbar button { height:34px; border:0; border-radius:6px; padding:0 12px; background:#c8102e; color:#fff; font-weight:700; cursor:pointer; }
+            .map-toolbar button.secondary { background:#263c60; }
+            .map-toolbar button:hover { filter:brightness(.94); }
+            .map-legend { background:rgba(255,255,255,.96); padding:10px 12px; border:1px solid #d8dee6; border-radius:8px; color:#263448; box-shadow:0 2px 10px rgba(16,30,54,.12); line-height:1.65; }
+            .map-legend .legend-title { font-weight:700; font-size:11px; letter-spacing:.04em; margin-bottom:4px; }
+            .legend-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:7px; border:1px solid rgba(0,0,0,.2); }
+            .map-status { color:#43536a; font-size:11px; padding:4px 7px; background:rgba(255,255,255,.9); border-radius:5px; }
+            .leaflet-popup-content { line-height:1.55; min-width:190px; }
+            .popup-title { font-weight:700; color:#17263f; font-size:13px; margin-bottom:5px; }
+            .popup-grid { display:grid; grid-template-columns:100px 1fr; gap:3px 8px; }
+            .popup-key { color:#66758a; }
+            .popup-val { color:#1f2c40; font-weight:600; overflow-wrap:anywhere; }
+            @media (max-width:700px) {
+              #map { height:590px; }
+              .map-toolbar { max-width:calc(100vw - 58px); }
+              .map-toolbar .map-title { width:100%; }
+              .map-toolbar input { width:100%; flex:1 1 100%; }
+              .map-toolbar select { flex:1 1 140px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div id="map"></div>
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+          <script src="https://unpkg.com/esri-leaflet@3.0.19/dist/esri-leaflet.js"></script>
+          <script src="https://unpkg.com/esri-leaflet-cluster@3.0.1/dist/esri-leaflet-cluster.js"></script>
+          <script>
+            (function () {
+              const layerUrl = 'https://services.arcgis.com/HQ0xoN0EzDPBOEci/ArcGIS/rest/services/Substations/FeatureServer/0';
+              const map = L.map('map', { zoomControl:true, preferCanvas:true }).setView([33.3787, -98.2178], 9);
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom:19,
+                attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors | Substation data: HIFLD-derived ArcGIS feature layer'
+              }).addTo(map);
+              L.control.scale({ imperial:true, metric:true, position:'bottomleft' }).addTo(map);
+
+              const toolbar = L.control({ position:'topright' });
+              toolbar.onAdd = function () {
+                const div = L.DomUtil.create('div', 'map-toolbar');
+                div.innerHTML = `
+                  <span class="map-title">SUBSTATION EXPLORER</span>
+                  <input id="placeSearch" type="search" placeholder="Search address, city, ZIP or place" aria-label="Search location">
+                  <button id="searchButton" type="button">Search</button>
+                  <select id="voltageFilter" aria-label="Filter by voltage">
+                    <option value="1=1">All voltage classes</option>
+                    <option value="MAX_VOLT >= 345">345 kV and above</option>
+                    <option value="MAX_VOLT >= 100 AND MAX_VOLT < 345">100 to 344 kV</option>
+                    <option value="MAX_VOLT < 100">Below 100 kV</option>
+                    <option value="MAX_VOLT IS NULL">Voltage not recorded</option>
+                  </select>
+                  <button id="locateButton" type="button" class="secondary">My location</button>
+                  <span id="mapStatus" class="map-status">Loading substation layer…</span>
+                `;
+                L.DomEvent.disableClickPropagation(div);
+                L.DomEvent.disableScrollPropagation(div);
+                return div;
+              };
+              toolbar.addTo(map);
+
+              const legend = L.control({ position:'bottomright' });
+              legend.onAdd = function () {
+                const div = L.DomUtil.create('div', 'map-legend');
+                div.innerHTML = `
+                  <div class="legend-title">MAXIMUM OPERATING VOLTAGE</div>
+                  <div><span class="legend-dot" style="background:#c8102e"></span>345 kV and above</div>
+                  <div><span class="legend-dot" style="background:#f28c28"></span>100 to 344 kV</div>
+                  <div><span class="legend-dot" style="background:#2876d2"></span>Below 100 kV</div>
+                  <div><span class="legend-dot" style="background:#9aa3af"></span>Voltage not recorded</div>
+                `;
+                return div;
+              };
+              legend.addTo(map);
+
+              const fields = ['FID','NAME','CITY','STATE','ZIP','TYPE','STATUS','COUNTY','LINES','MAX_VOLT','MIN_VOLT','MAX_INFER','MIN_INFER'];
+              function voltageColor(props) {
+                if (props.MAX_VOLT === null || props.MAX_VOLT === undefined || props.MAX_VOLT === '') return '#9aa3af';
+                const v = Number(props.MAX_VOLT);
+                if (!Number.isFinite(v)) return '#9aa3af';
+                if (v >= 345) return '#c8102e';
+                if (v >= 100) return '#f28c28';
+                return '#2876d2';
+              }
+              function safe(value) {
+                return String(value === null || value === undefined || value === '' ? 'Not recorded' : value)
+                  .replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+              }
+              function popup(feature) {
+                const p = feature.properties || {};
+                const name = p.NAME || 'Unnamed substation';
+                const rows = [
+                  ['City / State', [p.CITY, p.STATE].filter(Boolean).join(', ') || 'Not recorded'],
+                  ['County', p.COUNTY],
+                  ['ZIP', p.ZIP],
+                  ['Max voltage', p.MAX_VOLT === null || p.MAX_VOLT === undefined ? 'Not recorded' : `${p.MAX_VOLT} kV`],
+                  ['Min voltage', p.MIN_VOLT === null || p.MIN_VOLT === undefined ? 'Not recorded' : `${p.MIN_VOLT} kV`],
+                  ['Connected lines', p.LINES],
+                  ['Status', p.STATUS],
+                  ['Facility type', p.TYPE]
+                ];
+                return `<div class="popup-title">${safe(name)}</div><div class="popup-grid">${rows.map(r => `<span class="popup-key">${safe(r[0])}</span><span class="popup-val">${safe(r[1])}</span>`).join('')}</div>`;
+              }
+
+              const substationLayer = L.esri.Cluster.featureLayer({
+                url: layerUrl,
+                where: "TYPE = 'SUBSTATION'",
+                fields: fields,
+                pointToLayer: function (feature, latlng) {
+                  return L.circleMarker(latlng, {
+                    radius:5,
+                    color:'#ffffff',
+                    weight:1.1,
+                    fillColor:voltageColor(feature.properties || {}),
+                    fillOpacity:0.9
+                  });
+                },
+                onEachFeature: function (feature, layer) {
+                  layer.bindPopup(popup(feature));
+                },
+                spiderfyOnMaxZoom:true,
+                showCoverageOnHover:false,
+                removeOutsideVisibleBounds:true,
+                maxClusterRadius:45,
+                chunkedLoading:true
+              });
+              substationLayer.on('loading', function () {
+                const el = document.getElementById('mapStatus');
+                if (el) el.textContent = 'Loading substations in this view…';
+              });
+              substationLayer.on('load', function () {
+                const el = document.getElementById('mapStatus');
+                if (el) {
+                  let n = 0;
+                  substationLayer.eachFeature(function () { n += 1; });
+                  el.textContent = `${n.toLocaleString()} features loaded in view`;
+                }
+              });
+              substationLayer.on('requesterror', function () {
+                const el = document.getElementById('mapStatus');
+                if (el) el.textContent = 'Substation service could not be reached';
+              });
+              substationLayer.addTo(map);
+
+              function searchLocation() {
+                const input = document.getElementById('placeSearch');
+                const query = input.value.trim();
+                const status = document.getElementById('mapStatus');
+                if (!query) { status.textContent = 'Enter an address, city or ZIP'; return; }
+                status.textContent = 'Searching location…';
+                const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us&q=' + encodeURIComponent(query);
+                fetch(url, { headers: { 'Accept':'application/json' } })
+                  .then(response => { if (!response.ok) throw new Error('Search service unavailable'); return response.json(); })
+                  .then(results => {
+                    if (!results.length) { status.textContent = 'No matching U.S. location found'; return; }
+                    const item = results[0];
+                    map.setView([Number(item.lat), Number(item.lon)], 12);
+                    status.textContent = 'Centered on ' + (item.name || query);
+                  })
+                  .catch(() => { status.textContent = 'Location search unavailable; try a city or ZIP'; });
+              }
+              document.getElementById('searchButton').addEventListener('click', searchLocation);
+              document.getElementById('placeSearch').addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') searchLocation();
+              });
+              document.getElementById('voltageFilter').addEventListener('change', function (event) {
+                substationLayer.setWhere("TYPE = 'SUBSTATION' AND (" + event.target.value + ")");
+              });
+              document.getElementById('locateButton').addEventListener('click', function () {
+                const status = document.getElementById('mapStatus');
+                if (!navigator.geolocation) { status.textContent = 'Location is not supported in this browser'; return; }
+                status.textContent = 'Finding your location…';
+                navigator.geolocation.getCurrentPosition(
+                  pos => { map.setView([pos.coords.latitude, pos.coords.longitude], 12); status.textContent = 'Centered on your location'; },
+                  () => { status.textContent = 'Location permission was not available'; },
+                  { enableHighAccuracy:false, timeout:10000, maximumAge:60000 }
+                );
+              });
+              setTimeout(() => map.invalidateSize(), 250);
+              window.addEventListener('resize', () => map.invalidateSize());
+            })();
+          </script>
+        </body>
+        </html>
         """,
-        height=560,
+        height=665,
         scrolling=False,
     )
     st.caption(
-        "Substation locations and attributes are sourced by MapScaping from HIFLD; "
-        "this is a screening reference, not available interconnection capacity."
+        "Standalone HIFLD-derived substation feature layer. The underlying ArcGIS layer primarily represents transmission substations at 69 kV and above; lower-voltage coverage may be incomplete. "
+        "Facility locations and attributes are for screening only and do not indicate available interconnection capacity."
     )
 
     st.markdown("### HIFLD U.S. transmission line map")
