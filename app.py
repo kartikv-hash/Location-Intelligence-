@@ -3552,10 +3552,9 @@ if selected_signal == "G":
                 maxZoom:19,
                 attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors | Transmission data: HIFLD-derived ArcGIS feature layer'
               });
-              const street = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-                maxZoom:19,
-                attribution:'&copy; OpenStreetMap contributors &copy; CARTO'
-              });
+              // Use OpenStreetMap as the default basemap. CARTO raster tiles now
+              // require an API key, so this standalone map intentionally does not
+              // request CARTO tiles or display a CARTO basemap option.
               const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
                 maxZoom:19,
                 attribution:'Tiles &copy; Esri'
@@ -3564,8 +3563,8 @@ if selected_signal == "G":
                 maxZoom:19,
                 attribution:'Tiles &copy; Esri'
               });
-              street.addTo(map);
-              L.control.layers({ 'Street':street, 'OpenStreetMap':osm, 'Satellite':satellite, 'Topographic':topo }, null, {collapsed:true, position:'topleft'}).addTo(map);
+              osm.addTo(map);
+              L.control.layers({ 'OpenStreetMap':osm, 'Satellite':satellite, 'Topographic':topo }, null, {collapsed:true, position:'topleft'}).addTo(map);
               L.control.scale({ imperial:true, metric:true, position:'bottomleft' }).addTo(map);
 
               const toolbar = L.control({ position:'topright' });
