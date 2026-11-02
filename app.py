@@ -35,8 +35,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-=======
-
 BG = "#FBF9F7"
 NAVY = "#050714"
 RED = "#E8392D"
