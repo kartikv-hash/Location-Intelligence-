@@ -81,13 +81,81 @@ if "sunstripe_user_email" not in st.session_state:
 
 # Show login screen until an approved user signs in.
 if not st.session_state.sunstripe_authenticated:
+    
+    # Sunstripe SELECT light login theme
+    st.markdown("""
+    <style>
+    /* Main application background */
+    [data-testid="stAppViewContainer"],
+    [data-testid="stHeader"],
+    [data-testid="stMain"] {
+        background-color: #FBF9F7 !important;
+    }
+
+    [data-testid="stAppViewContainer"] {
+        color: #050714 !important;
+    }
+
+    /* Login headings and text */
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] {
+        color: #050714;
+    }
+
+    /* Login form card */
+    [data-testid="stForm"] {
+        background: #FFFFFF !important;
+        border: 1px solid #E7E0DB !important;
+        border-radius: 14px !important;
+        padding: 22px !important;
+        box-shadow: 0 8px 28px rgba(5, 7, 20, 0.07);
+    }
+
+    /* Email and password fields */
+    [data-testid="stTextInput"] input {
+        background-color: #FFFFFF !important;
+        color: #050714 !important;
+        border: 1px solid #D8D1CB !important;
+        border-radius: 8px !important;
+    }
+
+    [data-testid="stTextInput"] input::placeholder {
+        color: #89817B !important;
+    }
+
+    /* Login button */
+    [data-testid="stFormSubmitButton"] button {
+        background-color: #E8392D !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 700 !important;
+    }
+
+    [data-testid="stFormSubmitButton"] button:hover {
+        background-color: #C92D24 !important;
+        color: #FFFFFF !important;
+    }
+
+    /* Remove dark theme text inconsistencies */
+    [data-testid="stCaptionContainer"] {
+        color: #68615C !important;
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
+
 
     st.markdown(
         """
         <div style="text-align:center; padding-top:65px;">
             <div style="font-size:36px; font-weight:800; color:#050714;">
-                Sunstripe <span style="color:#E8392D;">SELECT</span>
-            </div>
+    Sunstripe <span style="color:#E8392D;">SELECT</span>
+</div>
             <div style="font-size:15px; color:#777; margin-top:8px;">
                 Know Where To Build
             </div>
