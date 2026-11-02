@@ -3284,30 +3284,39 @@ if selected_signal == "G":
     else:
         st.info("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the external grid map below remains available.")
 
-    st.markdown("### Interactive U.S. substation map")
-    st.caption(
-        "Explore U.S. electrical substations, search by location, filter by voltage class, "
-        "and select individual facilities to inspect the attributes provided by the map."
-    )
-    substation_map_url = (
+    st.markdown("### U.S. substation map")
+    # Display only the map portion of the MapScaping page. The wrapper clips the
+    # publisher's page header/article content; the embedded map remains interactive.
+    _substation_page_url = (
         "https://mapscaping.com/find-electrical-substations-near-me-interactive-map/"
         "#lat=32.3422&lng=-98.9786&z=6"
     )
-    st.markdown(
-        "<div style='border:1px solid #E7E0DB;border-radius:12px;overflow:hidden;"
-        "background:#FFFDFA;padding:4px;'>",
-        unsafe_allow_html=True,
+    st.components.v1.html(
+        f"""
+        <div style="width:100%;height:760px;overflow:hidden;position:relative;">
+          <iframe src="{_substation_page_url}"
+            title="U.S. electrical substation map"
+            style="position:absolute;left:0;top:-300px;width:100%;height:1120px;"
+            loading="lazy" allowfullscreen></iframe>
+        </div>
+        """,
+        height=760,
+        scrolling=False,
+    )
+    st.caption(
+        "Map view only. Substation locations and attributes are sourced by MapScaping from HIFLD; "
+        "this is a screening reference, not available interconnection capacity."
+    )
+
+    st.markdown("### HIFLD U.S. transmission line map")
+    _hifld_transmission_url = (
+        "https://www.arcgis.com/apps/mapviewer/index.html"
+        "?layers=d77284d1a97a426eaf960bab4764999c"
     )
     st.components.v1.iframe(
-        src=substation_map_url,
-        height=900,
+        src=_hifld_transmission_url,
+        height=820,
         scrolling=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.caption(
-        "MapScaping describes this map as using U.S. HIFLD substation data. "
-        "Voltage classes, facility attributes, and coverage depend on the source dataset; "
-        "the map is a screening reference and does not indicate available interconnection capacity."
     )
 
     # ERCOT nodal workspace is an isolated companion module. It is rendered only
