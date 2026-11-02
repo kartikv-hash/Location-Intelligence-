@@ -3282,7 +3282,7 @@ if selected_signal == "G":
             "Displayed geometries and voltage labels reflect the supplied dataset; they do not establish available transfer capacity."
         )
     else:
-        st.caption("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the HIFLD transmission line map below remains available.")
+        st.caption("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the standalone transmission line map below remains available.")
 
     st.markdown("### U.S. substation map")
     # Standalone map component: no MapScaping article, banner, sidebar, or page content.
@@ -3497,28 +3497,230 @@ if selected_signal == "G":
         "Facility locations and attributes are for screening only and do not indicate available interconnection capacity."
     )
 
-    st.markdown("### HIFLD U.S. transmission line map")
-    _hifld_transmission_url = (
-        "https://www.arcgis.com/apps/mapviewer/index.html"
-        "?layers=d77284d1a97a426eaf960bab4764999c"
-    )
-    st.markdown(
-        "<div style='border:1px solid #E7E0DB;border-radius:10px;overflow:hidden;"
-        "background:#FFFDFA;padding:6px;'>",
-        unsafe_allow_html=True,
-    )
-    st.components.v1.iframe(
-        src=_hifld_transmission_url,
-        height=820,
-        scrolling=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown(
-        f"[Open the HIFLD transmission line map in a new tab]({_hifld_transmission_url})"
+    st.markdown("### U.S. transmission line map")
+    # Standalone transmission map in the same Leaflet style as the substation map.
+    # The MapScaping article describes its interactive map as using the HIFLD
+    # electric power transmission dataset; this component renders the public
+    # ArcGIS line feature layer directly, without embedding the MapScaping page.
+    st.components.v1.html(
+        r"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+          <style>
+            html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; font-family:Arial,sans-serif; }
+            #map { width:100%; height:650px; background:#e9eff2; border:1px solid #d6dce2; border-radius:10px; }
+            .leaflet-container { font:12px Arial,sans-serif; }
+            .map-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 12px; background:rgba(255,255,255,.97); border:1px solid #d8dee6; border-radius:9px; box-shadow:0 2px 12px rgba(16,30,54,.16); max-width:min(760px, calc(100vw - 72px)); }
+            .map-toolbar .map-title { font-size:13px; font-weight:700; letter-spacing:.04em; color:#17263f; margin-right:4px; white-space:nowrap; }
+            .map-toolbar input, .map-toolbar select { height:34px; border:1px solid #cbd3dd; border-radius:6px; padding:0 9px; color:#18263d; background:#fff; font-size:12px; min-width:120px; }
+            .map-toolbar input { width:220px; min-width:150px; }
+            .map-toolbar button { height:34px; border:0; border-radius:6px; padding:0 12px; background:#c8102e; color:#fff; font-weight:700; cursor:pointer; }
+            .map-toolbar button.secondary { background:#263c60; }
+            .map-toolbar button:hover { filter:brightness(.94); }
+            .map-legend { background:rgba(255,255,255,.96); padding:10px 12px; border:1px solid #d8dee6; border-radius:8px; color:#263448; box-shadow:0 2px 10px rgba(16,30,54,.12); line-height:1.65; }
+            .map-legend .legend-title { font-weight:700; font-size:11px; letter-spacing:.04em; margin-bottom:4px; }
+            .legend-line { display:inline-block; width:19px; height:0; border-top:4px solid; margin-right:7px; vertical-align:middle; }
+            .map-status { color:#43536a; font-size:11px; padding:4px 7px; background:rgba(255,255,255,.9); border-radius:5px; }
+            .leaflet-popup-content { line-height:1.55; min-width:210px; }
+            .popup-title { font-weight:700; color:#17263f; font-size:13px; margin-bottom:5px; }
+            .popup-grid { display:grid; grid-template-columns:112px 1fr; gap:3px 8px; }
+            .popup-key { color:#66758a; }
+            .popup-val { color:#1f2c40; font-weight:600; overflow-wrap:anywhere; }
+            @media (max-width:700px) {
+              #map { height:590px; }
+              .map-toolbar { max-width:calc(100vw - 58px); }
+              .map-toolbar .map-title { width:100%; }
+              .map-toolbar input { width:100%; flex:1 1 100%; }
+              .map-toolbar select { flex:1 1 170px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div id="map"></div>
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <script src="https://unpkg.com/esri-leaflet@3.0.19/dist/esri-leaflet.js"></script>
+          <script>
+            (function () {
+              const layerUrl = 'https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/US_Electric_Power_Transmission_Lines/FeatureServer/0';
+              const map = L.map('map', { zoomControl:true, preferCanvas:true }).setView([39.0, -98.0], 4);
+
+              const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom:19,
+                attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors | Transmission data: HIFLD-derived ArcGIS feature layer'
+              });
+              const street = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                maxZoom:19,
+                attribution:'&copy; OpenStreetMap contributors &copy; CARTO'
+              });
+              const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom:19,
+                attribution:'Tiles &copy; Esri'
+              });
+              const topo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom:19,
+                attribution:'Tiles &copy; Esri'
+              });
+              street.addTo(map);
+              L.control.layers({ 'Street':street, 'OpenStreetMap':osm, 'Satellite':satellite, 'Topographic':topo }, null, {collapsed:true, position:'topleft'}).addTo(map);
+              L.control.scale({ imperial:true, metric:true, position:'bottomleft' }).addTo(map);
+
+              const toolbar = L.control({ position:'topright' });
+              toolbar.onAdd = function () {
+                const div = L.DomUtil.create('div', 'map-toolbar');
+                div.innerHTML = `
+                  <span class="map-title">TRANSMISSION LINE EXPLORER</span>
+                  <input id="placeSearch" type="search" placeholder="Search address, city, ZIP or place" aria-label="Search location">
+                  <button id="searchButton" type="button">Search</button>
+                  <select id="voltageFilter" aria-label="Filter by voltage class">
+                    <option value="1=1">All voltage classes</option>
+                    <option value="VOLTAGE > 100">High voltage (&gt;100 kV)</option>
+                    <option value="VOLTAGE >= 35 AND VOLTAGE <= 100">Sub-transmission (35–100 kV)</option>
+                    <option value="VOLTAGE < 35">Distribution (&lt;35 kV)</option>
+                    <option value="VOLTAGE IS NULL">Unknown / other</option>
+                  </select>
+                  <button id="locateButton" type="button" class="secondary">My location</button>
+                  <span id="mapStatus" class="map-status">Loading transmission lines…</span>
+                `;
+                L.DomEvent.disableClickPropagation(div);
+                L.DomEvent.disableScrollPropagation(div);
+                return div;
+              };
+              toolbar.addTo(map);
+
+              const legend = L.control({ position:'bottomright' });
+              legend.onAdd = function () {
+                const div = L.DomUtil.create('div', 'map-legend');
+                div.innerHTML = `
+                  <div class="legend-title">VOLTAGE CLASS</div>
+                  <div><span class="legend-line" style="border-color:#c8102e"></span>High voltage (&gt;100 kV)</div>
+                  <div><span class="legend-line" style="border-color:#f28c28"></span>Sub-transmission (35–100 kV)</div>
+                  <div><span class="legend-line" style="border-color:#24a36b"></span>Distribution (&lt;35 kV)</div>
+                  <div><span class="legend-line" style="border-color:#9aa3af"></span>Unknown / other</div>
+                `;
+                return div;
+              };
+              legend.addTo(map);
+
+              const fields = ['OBJECTID_1','ID','TYPE','STATUS','SOURCE','SOURCEDATE','VAL_METHOD','VAL_DATE','OWNER','VOLTAGE','VOLT_CLASS','INFERRED','SUB_1','SUB_2'];
+              function voltageColor(props) {
+                const value = props.VOLTAGE;
+                if (value === null || value === undefined || value === '') return '#9aa3af';
+                const v = Number(value);
+                if (!Number.isFinite(v)) return '#9aa3af';
+                if (v > 100) return '#c8102e';
+                if (v >= 35) return '#f28c28';
+                return '#24a36b';
+              }
+              function safe(value) {
+                return String(value === null || value === undefined || value === '' ? 'Not recorded' : value)
+                  .replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+              }
+              function popup(feature) {
+                const p = feature.properties || {};
+                const name = p.ID ? `Transmission line ${p.ID}` : 'Transmission line';
+                const rows = [
+                  ['Voltage', p.VOLTAGE === null || p.VOLTAGE === undefined ? 'Not recorded' : `${p.VOLTAGE} kV`],
+                  ['Voltage class', p.VOLT_CLASS],
+                  ['From substation', p.SUB_1],
+                  ['To substation', p.SUB_2],
+                  ['Owner / operator', p.OWNER],
+                  ['Line type', p.TYPE],
+                  ['Operational status', p.STATUS],
+                  ['Data source', p.SOURCE],
+                  ['Validation method', p.VAL_METHOD],
+                  ['Validation date', p.VAL_DATE],
+                  ['Source date', p.SOURCEDATE],
+                  ['Inferred attribute', p.INFERRED]
+                ];
+                return `<div class="popup-title">${safe(name)}</div><div class="popup-grid">${rows.map(r => `<span class="popup-key">${safe(r[0])}</span><span class="popup-val">${safe(r[1])}</span>`).join('')}</div>`;
+              }
+
+              const lineLayer = L.esri.featureLayer({
+                url: layerUrl,
+                where: '1=1',
+                fields: fields,
+                simplifyFactor: 0.5,
+                precision: 5,
+                style: function (feature) {
+                  const color = voltageColor(feature.properties || {});
+                  return { color:color, weight:1.5, opacity:0.86, lineCap:'round', lineJoin:'round' };
+                },
+                onEachFeature: function (feature, layer) {
+                  layer.bindPopup(popup(feature), { maxWidth:340 });
+                }
+              });
+              lineLayer.on('loading', function () {
+                const el = document.getElementById('mapStatus');
+                if (el) el.textContent = 'Loading transmission lines in this view…';
+              });
+              lineLayer.on('load', function () {
+                const el = document.getElementById('mapStatus');
+                if (el) {
+                  let n = 0;
+                  lineLayer.eachFeature(function () { n += 1; });
+                  el.textContent = `${n.toLocaleString()} line features loaded in view`;
+                }
+              });
+              lineLayer.on('requesterror', function () {
+                const el = document.getElementById('mapStatus');
+                if (el) el.textContent = 'Transmission line service could not be reached';
+              });
+              lineLayer.addTo(map);
+
+              function searchLocation() {
+                const input = document.getElementById('placeSearch');
+                const query = input.value.trim();
+                const status = document.getElementById('mapStatus');
+                if (!query) { status.textContent = 'Enter an address, city or ZIP'; return; }
+                status.textContent = 'Searching location…';
+                const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us&q=' + encodeURIComponent(query);
+                fetch(url, { headers: { 'Accept':'application/json' } })
+                  .then(response => { if (!response.ok) throw new Error('Search service unavailable'); return response.json(); })
+                  .then(results => {
+                    if (!results.length) { status.textContent = 'No matching U.S. location found'; return; }
+                    const item = results[0];
+                    map.setView([Number(item.lat), Number(item.lon)], 10);
+                    status.textContent = 'Centered on ' + (item.name || query);
+                  })
+                  .catch(() => { status.textContent = 'Location search unavailable; try a city or ZIP'; });
+              }
+              document.getElementById('searchButton').addEventListener('click', searchLocation);
+              document.getElementById('placeSearch').addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') searchLocation();
+              });
+              document.getElementById('voltageFilter').addEventListener('change', function (event) {
+                const status = document.getElementById('mapStatus');
+                status.textContent = 'Applying voltage filter…';
+                lineLayer.setWhere(event.target.value);
+              });
+              document.getElementById('locateButton').addEventListener('click', function () {
+                const status = document.getElementById('mapStatus');
+                if (!navigator.geolocation) { status.textContent = 'Location is not supported in this browser'; return; }
+                status.textContent = 'Finding your location…';
+                navigator.geolocation.getCurrentPosition(
+                  pos => { map.setView([pos.coords.latitude, pos.coords.longitude], 10); status.textContent = 'Centered on your location'; },
+                  () => { status.textContent = 'Location permission was not available'; },
+                  { enableHighAccuracy:false, timeout:10000, maximumAge:60000 }
+                );
+              });
+              setTimeout(() => map.invalidateSize(), 250);
+              window.addEventListener('resize', () => map.invalidateSize());
+            })();
+          </script>
+        </body>
+        </html>
+        """,
+        height=665,
+        scrolling=False,
     )
     st.caption(
-        "Feature information and pop-ups depend on the attributes available in the HIFLD map layer. "
-        "This is a screening reference and does not establish available transfer capacity."
+        "Standalone transmission-line map using the HIFLD-derived ArcGIS feature layer referenced by MapScaping. "
+        "It displays reported line geometry and attributes; voltage labels and source records may be incomplete or outdated. "
+        "This is a screening reference and does not establish available transfer capacity or interconnection rights."
     )
 
     # ERCOT nodal workspace is an isolated companion module. It is rendered only
