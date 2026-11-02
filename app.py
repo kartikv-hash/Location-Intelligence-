@@ -4937,7 +4937,693 @@ if selected_signal == "I":
                 st.caption("The platform does not infer upgrade costs, study outcomes or available capacity when those fields are absent from the uploaded source.")
         except Exception as exc:
             st.error(f"Could not read the interconnection file: {exc}")
+    # ============================================================
+    # DEC / DEP — ANNUAL CLUSTER STUDY & INTERCONNECTION INTELLIGENCE
+    # ============================================================
 
+    _duke_code = (
+        "DEC" if selected_iso.startswith("DEC")
+        else "DEP" if selected_iso.startswith("DEP")
+        else None
+    )
+
+    if _duke_code:
+        st.markdown("---")
+        st.markdown(
+            '<div class="section-title">DEC / DEP — Cluster Study & '
+            'Interconnection Intelligence</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "Upload official annual cluster study reports and generate a "
+            "developer-grade electrical, interconnection, financial and "
+            "site-specific risk assessment."
+        )
+
+        st.caption(
+            f"Selected utility: {_duke_code}. DEC and DEP reports are "
+            "processed separately. Findings must be traceable to the "
+            "uploaded report and its page numbers."
+        )
+
+        # --------------------------------------------------------
+        # PROJECT INPUTS
+        # --------------------------------------------------------
+        with st.expander("1. Proposed project details", expanded=True):
+            _dc1, _dc2 = st.columns(2)
+
+            with _dc1:
+                _duke_site_name = st.text_input(
+                    "Project / site name",
+                    key=f"duke_site_name_{_duke_code}",
+                )
+                _duke_project_type = st.selectbox(
+                    "Project technology",
+                    [
+                        "Solar",
+                        "Wind",
+                        "Standalone BESS",
+                        "Hybrid Solar + BESS",
+                        "Large Load / Data Center",
+                    ],
+                    key=f"duke_project_type_{_duke_code}",
+                )
+                _duke_project_mw = st.number_input(
+                    "Proposed project capacity (MW)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1.0,
+                    key=f"duke_project_mw_{_duke_code}",
+                )
+                _duke_project_mwh = st.number_input(
+                    "BESS energy capacity (MWh, if applicable)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1.0,
+                    key=f"duke_project_mwh_{_duke_code}",
+                )
+
+            with _dc2:
+                _duke_project_location = st.text_input(
+                    "State, county and site location",
+                    key=f"duke_location_{_duke_code}",
+                )
+                _duke_poi = st.text_input(
+                    "Potential POI / substation / feeder (if known)",
+                    key=f"duke_poi_{_duke_code}",
+                )
+                _duke_bess_charge = st.number_input(
+                    "Maximum BESS charging power (MW)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1.0,
+                    key=f"duke_charge_{_duke_code}",
+                )
+                _duke_bess_discharge = st.number_input(
+                    "Maximum BESS discharging power (MW)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1.0,
+                    key=f"duke_discharge_{_duke_code}",
+                )
+
+            _duke_site_notes = st.text_area(
+                "Additional project assumptions / site information",
+                placeholder=(
+                    "Enter coordinates, parcel information, proposed "
+                    "interconnection voltage, export/import requirements, "
+                    "target COD or any other relevant information."
+                ),
+                height=100,
+                key=f"duke_site_notes_{_duke_code}",
+            )
+
+        # --------------------------------------------------------
+        # REPORT UPLOAD
+        # --------------------------------------------------------
+        st.markdown("### 2. Upload annual cluster study reports")
+        st.caption(
+            "You can upload multiple reports for the selected utility, "
+            "including transmission, distribution, Phase 1, Phase 2, "
+            "appendices and supporting study documents."
+        )
+
+        _duke_uploads = st.file_uploader(
+            f"Upload {_duke_code} cluster study PDF report(s)",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key=f"duke_cluster_pdf_{_duke_code}",
+        )
+
+        # --------------------------------------------------------
+        # ANALYSIS ENGINE
+        # --------------------------------------------------------
+        if _duke_uploads:
+            st.write(
+                f"**Uploaded documents:** {len(_duke_uploads)}"
+            )
+            for _duke_file in _duke_uploads:
+                st.caption(f"• {_duke_file.name}")
+
+        _duke_run_analysis = st.button(
+            f"Run {_duke_code} Cluster Study Analysis",
+            type="primary",
+            use_container_width=True,
+            disabled=not _duke_uploads,
+            key=f"duke_run_analysis_{_duke_code}",
+        )
+
+        def _duke_extract_pdf_pages(_uploaded_files):
+            """Extract searchable PDF text and tables with page references."""
+            import pdfplumber
+
+            _all_pages = []
+            _image_only_pages = []
+
+            for _file in _uploaded_files:
+                _file_bytes = _file.getvalue()
+
+                with pdfplumber.open(io.BytesIO(_file_bytes)) as _pdf:
+                    for _page_number, _page in enumerate(_pdf.pages, start=1):
+                        _page_text = _page.extract_text(
+                            x_tolerance=2,
+                            y_tolerance=3,
+                        ) or ""
+
+                        _table_blocks = []
+                        try:
+                            for _table in _page.extract_tables() or []:
+                                _rows = []
+                                for _row in _table:
+                                    _cells = [
+                                        str(_cell or "").replace(
+                                            "\n", " "
+                                        ).strip()
+                                        for _cell in (_row or [])
+                                    ]
+                                    if any(_cells):
+                                        _rows.append(" | ".join(_cells))
+
+                                if _rows:
+                                    _table_blocks.append(
+                                        "\n".join(_rows)
+                                    )
+                        except Exception:
+                            pass
+
+                        _combined = _page_text.strip()
+
+                        if _table_blocks:
+                            _combined += (
+                                "\n\nEXTRACTED TABLES:\n"
+                                + "\n\n".join(_table_blocks)
+                            )
+
+                        if not _combined.strip():
+                            if getattr(_page, "images", []):
+                                _image_only_pages.append(
+                                    f"{_file.name} — page {_page_number}"
+                                )
+                            _combined = (
+                                "[No selectable text extracted from this "
+                                "page. It may contain scanned tables, "
+                                "diagrams or image-based content.]"
+                            )
+
+                        _all_pages.append({
+                            "source": _file.name,
+                            "page": _page_number,
+                            "text": _combined,
+                        })
+
+            return _all_pages, _image_only_pages
+
+        def _duke_build_chunks(_pages, _max_chars=13000):
+            """Build text chunks without losing document and page references."""
+            _chunks = []
+            _current = ""
+
+            for _page in _pages:
+                _header = (
+                    f"\n\nSOURCE: {_page['source']} | "
+                    f"PDF PAGE: {_page['page']}\n"
+                )
+                _remaining = _header + _page["text"]
+
+                while _remaining:
+                    _space = _max_chars - len(_current)
+
+                    if _space <= len(_header) + 100:
+                        if _current.strip():
+                            _chunks.append(_current)
+                        _current = ""
+                        _space = _max_chars
+
+                    _piece = _remaining[:_space]
+                    _current += _piece
+                    _remaining = _remaining[len(_piece):]
+
+                    if _remaining:
+                        _chunks.append(_current)
+                        _current = ""
+
+            if _current.strip():
+                _chunks.append(_current)
+
+            return _chunks
+
+        def _duke_groq_call(_system_prompt, _user_prompt, _max_tokens=1000):
+            """Call the configured Groq model without exposing API credentials."""
+            _api_key = ""
+
+            try:
+                _api_key = str(
+                    st.secrets.get("GROQ_API_KEY", "")
+                ).strip().strip("\"'")
+                _model = str(
+                    st.secrets.get(
+                        "GROQ_MODEL",
+                        "openai/gpt-oss-20b",
+                    )
+                ).strip()
+            except Exception:
+                _model = "openai/gpt-oss-20b"
+
+            if not _api_key:
+                _api_key = os.getenv(
+                    "GROQ_API_KEY", ""
+                ).strip().strip("\"'")
+
+            if not _api_key:
+                raise RuntimeError(
+                    "GROQ_API_KEY is missing. Configure it in "
+                    "Streamlit Cloud → Settings → Secrets."
+                )
+
+            _response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": _model or "openai/gpt-oss-20b",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _system_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": _user_prompt,
+                        },
+                    ],
+                    "temperature": 0.1,
+                    "max_completion_tokens": _max_tokens,
+                },
+                timeout=(10, 120),
+            )
+
+            if _response.status_code == 401:
+                raise RuntimeError(
+                    "Groq rejected the API key. Check GROQ_API_KEY."
+                )
+            if _response.status_code == 429:
+                raise RuntimeError(
+                    "Groq rate limit or quota reached. Try again later."
+                )
+
+            _response.raise_for_status()
+            _payload = _response.json()
+            _choices = _payload.get("choices", [])
+
+            if not _choices:
+                raise RuntimeError(
+                    "The AI service returned no analysis."
+                )
+
+            _answer = str(
+                _choices[0]["message"].get("content") or ""
+            ).strip()
+
+            if not _answer:
+                raise RuntimeError(
+                    "The AI service returned an empty response."
+                )
+
+            return _answer
+
+        # --------------------------------------------------------
+        # RUN MULTI-STAGE ANALYSIS
+        # --------------------------------------------------------
+        if _duke_run_analysis:
+            try:
+                check_upload_size(_duke_uploads[0])
+
+                with st.spinner(
+                    "Extracting report text, tables and page references..."
+                ):
+                    _duke_pages, _duke_image_pages = (
+                        _duke_extract_pdf_pages(_duke_uploads)
+                    )
+
+                _duke_total_chars = sum(
+                    len(_p["text"]) for _p in _duke_pages
+                )
+
+                if _duke_total_chars < 1000:
+                    st.error(
+                        "Insufficient searchable text was extracted. "
+                        "Please upload a searchable PDF or an OCR-processed "
+                        "version of the report."
+                    )
+                    st.stop()
+
+                _duke_chunks = _duke_build_chunks(_duke_pages)
+
+                if len(_duke_chunks) > 30:
+                    st.error(
+                        f"This upload generated {len(_duke_chunks)} "
+                        "analysis sections. The current processing limit "
+                        "is 30 sections. Split the report into smaller "
+                        "PDF groups and analyse them separately."
+                    )
+                    st.stop()
+
+                _duke_project_context = f"""
+UTILITY: {_duke_code}
+
+PROJECT NAME: {_duke_site_name or "Not provided"}
+PROJECT LOCATION: {_duke_project_location or "Not provided"}
+PROJECT TYPE: {_duke_project_type}
+PROJECT MW: {_duke_project_mw if _duke_project_mw > 0 else "Not provided"}
+PROJECT MWH: {_duke_project_mwh if _duke_project_mwh > 0 else "Not provided"}
+POTENTIAL POI: {_duke_poi or "Not provided"}
+BESS CHARGING MW: {_duke_bess_charge if _duke_bess_charge > 0 else "Not provided"}
+BESS DISCHARGING MW: {_duke_bess_discharge if _duke_bess_discharge > 0 else "Not provided"}
+ADDITIONAL ASSUMPTIONS: {_duke_site_notes or "None provided"}
+"""
+
+                _duke_extraction_prompt = """
+You are a senior US power systems engineer and interconnection
+consultant reviewing a DEC or DEP annual cluster study report.
+
+Extract only information supported by this document section.
+
+For every material finding, preserve:
+- Exact source document.
+- PDF page number.
+- Section, table or appendix reference where identifiable.
+- Whether the finding is utility-reported, calculated,
+  engineering interpretation, screening assumption or unavailable.
+
+Extract and organise:
+
+1. Cluster participants: project ID, technology, requested MW,
+   summer/winter MW, MWh, POI, substation, feeder, voltage,
+   study phase, service type, status and reported costs.
+
+2. DFAX: facility, line name, voltage, terminal substations,
+   contingency, generator, generator MW, DFAX percentage,
+   facility rating, MW impact, loading impact, cost allocation
+   and assigned upgrade.
+
+3. Transmission: normal/emergency ratings, pre/post-contingency
+   loading, N-1 issues, voltage violations, thermal headroom
+   where valid, overloaded facilities and operating scenarios.
+
+4. Distribution: substation, transformer, feeder, circuit,
+   DER penetration, voltage violations, conductor limitations,
+   protection, reverse power flow and upgrades.
+
+5. Network upgrades: assigned and contingent upgrades,
+   descriptions, affected facilities, costs, cost class,
+   lead times, dependencies and completion dates.
+
+6. NRIS and ERIS: assess separately. Extract deliverability
+   conclusions, operating restrictions and upgrade dependencies.
+
+7. Reactive power: power factor, leading/lagging Mvar,
+   inverter capability, STATCOM/SVC or capacitor requirements.
+
+8. Short circuit: breaker ratings, fault duty, incremental
+   contribution, breaker replacement and report thresholds.
+
+9. Stability: dynamic modelling, inverter models, contingencies,
+   voltage recovery and pending analysis.
+
+10. Affected systems: tie lines, DFAX screening thresholds,
+    neighbouring utilities, notification and study requirements.
+
+11. POI and station configuration: station arrangement,
+    breaker positions, line taps, switching stations,
+    multi-breaker requirements, land, access and ROW.
+
+12. Cost and schedule: direct allocations, shared upgrades,
+    contingent exposure, customer facilities, estimate class,
+    lead time, critical dependencies and restudy exposure.
+
+13. Technology implications: solar, wind, standalone BESS,
+    hybrid solar+BESS and large loads, where relevant.
+
+14. Engineering calculations: preserve sign conventions.
+    MW impact = generator MW × DFAX expressed as a decimal.
+    Loading impact = MW impact / facility MVA rating × 100.
+    Cost allocation must follow the utility's documented method.
+    Never calculate where inputs or methodology are missing.
+
+Do not invent DFAX, MW impact, ratings, costs, headroom,
+available capacity, queue positions or dates.
+
+Do not transfer another generator's DFAX to a candidate POI
+merely because the locations are geographically close.
+
+For BESS, distinguish charging from discharging. Do not assume
+a generation DFAX is valid for charging.
+
+Keep DEC and DEP data separate.
+
+Return concise, structured evidence notes. Preserve source
+page numbers. Identify missing or unreadable information.
+"""
+
+                _duke_chunk_findings = []
+                _duke_progress = st.progress(0.0)
+                _duke_status = st.empty()
+
+                for _chunk_index, _chunk in enumerate(
+                    _duke_chunks, start=1
+                ):
+                    _duke_status.write(
+                        f"Analysing report section "
+                        f"{_chunk_index} of {len(_duke_chunks)}..."
+                    )
+
+                    _chunk_prompt = f"""
+UTILITY AND PROJECT CONTEXT:
+{_duke_project_context}
+
+DOCUMENT SECTION {_chunk_index}/{len(_duke_chunks)}:
+
+{_chunk}
+
+Extract the findings using the required engineering categories.
+Cite the source document and PDF page for every finding.
+Do not make conclusions that require information outside
+this document section. Identify missing data explicitly.
+"""
+
+                    _chunk_result = _duke_groq_call(
+                        _duke_extraction_prompt,
+                        _chunk_prompt,
+                        _max_tokens=900,
+                    )
+
+                    _duke_chunk_findings.append(
+                        f"\n\nEXTRACTED SECTION {_chunk_index}\n"
+                        f"{_chunk_result}"
+                    )
+
+                    _duke_progress.progress(
+                        _chunk_index / len(_duke_chunks)
+                    )
+
+                _duke_status.write(
+                    "Combining extracted evidence into the final "
+                    "interconnection assessment..."
+                )
+
+                _duke_synthesis_prompt = """
+You are the lead interconnection engineering analyst for
+Sunstripe SELECT.
+
+Prepare a comprehensive developer-grade Cluster Study and
+Interconnection Intelligence Assessment for the selected
+DEC or DEP utility using only the extracted evidence.
+
+The final report must contain:
+
+A. Executive interconnection intelligence summary.
+B. Document identification, study phase, year and assumptions.
+C. Cluster participant and generation queue intelligence.
+D. Technology mix and project concentration by POI, station
+   and feeder, where the data supports it.
+E. Consolidated DFAX database and ranking.
+F. MW impact and loading impact calculations, with formulas.
+G. Critical transmission facilities and thermal constraints.
+H. Voltage, contingency and N-1 analysis.
+I. Distribution feeder, transformer and DER penetration analysis.
+J. Assigned network upgrade register.
+K. Contingent upgrade register and dependencies.
+L. NRIS versus ERIS assessment.
+M. BESS charging-versus-discharging assessment, where relevant.
+N. Reactive power and power factor requirements.
+O. Short circuit and breaker duty assessment.
+P. Stability and dynamic performance assessment.
+Q. Affected-system and neighbouring utility exposure.
+R. POI and station configuration assessment.
+S. Multi-breaker switching station and land requirements,
+   where applicable and supported by the report.
+T. Financial exposure: assigned, contingent, customer-owned
+   and other costs, without double counting.
+U. Interconnection critical-path and schedule risk.
+V. Technology-specific site analysis.
+W. Site-specific risk matrix.
+X. Transparent 100-point development attractiveness score,
+   using the following weights:
+   - POI suitability: 15
+   - DFAX exposure: 15
+   - Thermal and voltage: 15
+   - Upgrade and cost exposure: 20
+   - Schedule and dependencies: 15
+   - Distribution capacity: 10
+   - Protection, reactive power and stability: 5
+   - Data confidence: 5
+Y. Potential POI ranking, where sufficient evidence exists.
+Z. Recommended developer actions and utility questions.
+AA. Missing data register.
+AB. Final development recommendation:
+    PRIORITISE / ADVANCE WITH CONDITIONS /
+    HOLD FOR FURTHER STUDY / DEPRIORITISE / REJECT.
+
+Mandatory analytical rules:
+
+- Keep utility-reported data separate from calculations,
+  engineering interpretation and screening assumptions.
+- Never invent missing values.
+- Preserve DFAX sign conventions and utility cost-allocation
+  methodology.
+- Do not confuse DFAX, MW impact, actual loading, incremental
+  loading, thermal headroom and available capacity.
+- Do not call queue MW available grid capacity.
+- Do not call ERIS unrestricted firm deliverability.
+- Do not infer load-serving capacity from generator studies.
+- Do not classify missing information as a passed study.
+- Do not reject a site simply because information is missing.
+- Distinguish assigned from contingent upgrades.
+- Distinguish project-attributed cost from total cluster cost.
+- Use only applicable report-specific thresholds.
+- For every material finding, cite document name and PDF page.
+- If a requested analysis cannot be supported, state exactly
+  what utility data or network model is required.
+- Do not compare DEC and DEP findings as if their study
+  assumptions and cost bases are automatically equivalent.
+
+The report should be detailed, technically defensible,
+commercially useful and suitable for renewable energy
+developers, IPPs, engineering teams and investment teams.
+"""
+
+                _duke_evidence_text = "\n".join(
+                    _duke_chunk_findings
+                )
+
+                _duke_final_prompt = f"""
+SELECTED UTILITY:
+{_duke_code}
+
+PROJECT SCENARIO:
+{_duke_project_context}
+
+UPLOADED SOURCE DOCUMENTS:
+{", ".join(_f.name for _f in _duke_uploads)}
+
+EXTRACTED PAGE-REFERENCED EVIDENCE:
+{_duke_evidence_text}
+
+Prepare the full final assessment now. Maintain source
+traceability. Do not invent missing engineering values.
+"""
+
+                _duke_final_report = _duke_groq_call(
+                    _duke_synthesis_prompt,
+                    _duke_final_prompt,
+                    _max_tokens=6000,
+                )
+
+                st.session_state[
+                    f"duke_cluster_result_{_duke_code}"
+                ] = _duke_final_report
+
+                st.session_state[
+                    f"duke_cluster_sources_{_duke_code}"
+                ] = ", ".join(
+                    _f.name for _f in _duke_uploads
+                )
+
+                st.session_state[
+                    f"duke_cluster_image_pages_{_duke_code}"
+                ] = _duke_image_pages
+
+                _duke_status.success(
+                    "Cluster study analysis completed."
+                )
+
+            except ImportError:
+                st.error(
+                    "PDF extraction package is missing. Add "
+                    "'pdfplumber>=0.11.0' to requirements.txt "
+                    "and redeploy the app."
+                )
+            except Exception as _duke_error:
+                st.error(
+                    f"Could not complete the {_duke_code} analysis: "
+                    f"{_duke_error}"
+                )
+
+        # --------------------------------------------------------
+        # DISPLAY AND DOWNLOAD FINAL REPORT
+        # --------------------------------------------------------
+        _duke_saved_result = st.session_state.get(
+            f"duke_cluster_result_{_duke_code}"
+        )
+
+        if _duke_saved_result:
+            st.markdown("---")
+            st.markdown("### 3. Cluster Study Intelligence Report")
+
+            st.caption(
+                "Source documents: "
+                + st.session_state.get(
+                    f"duke_cluster_sources_{_duke_code}", ""
+                )
+            )
+
+            _duke_image_pages_saved = st.session_state.get(
+                f"duke_cluster_image_pages_{_duke_code}", []
+            )
+
+            if _duke_image_pages_saved:
+                st.warning(
+                    "Some PDF pages contained image-only content "
+                    "that could not be extracted as text. Review "
+                    "these pages manually before relying on the "
+                    "assessment: "
+                    + "; ".join(_duke_image_pages_saved)
+                )
+
+            st.markdown(_duke_saved_result)
+
+            st.download_button(
+                "Download full cluster study assessment",
+                data=_duke_saved_result.encode("utf-8"),
+                file_name=(
+                    f"Sunstripe_SELECT_{_duke_code}_"
+                    "Cluster_Study_Analysis.md"
+                ),
+                mime="text/markdown",
+                use_container_width=True,
+                key=f"duke_cluster_download_{_duke_code}",
+            )
+
+        st.caption(
+            "Engineering limitation: this module extracts selectable "
+            "PDF text and tables. It does not perform OCR on scanned "
+            "pages or independently run power-flow, short-circuit or "
+            "stability simulations. AI-generated findings must be "
+            "checked against the original utility report and "
+            "engineering model results."
+        )
 
 # ============================================================
 # SIGNAL N — NEIGHBORHOOD & COMMUNITY SENTIMENTS
