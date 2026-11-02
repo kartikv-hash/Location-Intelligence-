@@ -3284,29 +3284,51 @@ if selected_signal == "G":
     else:
         st.info("No local transmission geometry is loaded. You can add CSV, GeoJSON, KML or KMZ files using the sidebar; the external grid map below remains available.")
 
-    st.markdown("### Interactive U.S. transmission map")
-    interactive_grid_map_url = (
-        "https://www.arcgis.com/apps/mapviewer/index.html"
-        "?layers=d77284d1a97a426eaf960bab4764999c"
+    st.markdown("### Interactive U.S. substation map")
+    st.caption(
+        "Explore U.S. electrical substations, search by location, filter by voltage class, "
+        "and select individual facilities to inspect the attributes provided by the map."
+    )
+    substation_map_url = (
+        "https://mapscaping.com/find-electrical-substations-near-me-interactive-map/"
+        "#lat=32.3422&lng=-98.9786&z=6"
     )
     st.markdown(
-        "<div style='border:1px solid #E7E0DB;border-radius:10px;overflow:hidden;"
-        "background:#FFFDFA;padding:6px;'>",
+        "<div style='border:1px solid #E7E0DB;border-radius:12px;overflow:hidden;"
+        "background:#FFFDFA;padding:4px;'>",
         unsafe_allow_html=True,
     )
     st.components.v1.iframe(
-        src=interactive_grid_map_url,
-        height=820,
+        src=substation_map_url,
+        height=900,
         scrolling=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown(
-        f"[Open interactive map in a new tab]({interactive_grid_map_url})"
-    )
     st.caption(
-        "Feature information and pop-ups depend on the attributes available in the map layer. "
-        "If the map is blocked by browser or organization policy, open it in a new tab."
+        "MapScaping describes this map as using U.S. HIFLD substation data. "
+        "Voltage classes, facility attributes, and coverage depend on the source dataset; "
+        "the map is a screening reference and does not indicate available interconnection capacity."
     )
+
+    # ERCOT nodal workspace is an isolated companion module. It is rendered only
+    # inside SIGNAL G, so the other SIGNAL sections and existing G features remain
+    # unchanged. Keep the module file beside app.py in the GitHub repository.
+    st.markdown('<div class="section-title">ERCOT Bus, Substation & Nodal Intelligence</div>', unsafe_allow_html=True)
+    st.caption(
+        "Search the ERCOT settlement-point registry, resolve bus and substation names, "
+        "review voltage, load zone, hubs and resource nodes, then connect selected buses "
+        "to uploaded LMP history or the available ERCOT DAM retrieval path."
+    )
+    try:
+        from ercot_nodal_module import render_ercot_nodal_workspace
+        with st.container(key="ercot_nodal_workspace"):
+            render_ercot_nodal_workspace()
+    except Exception as _ercot_nodal_error:
+        st.error(f"ERCOT nodal workspace could not be loaded: {_ercot_nodal_error}")
+        st.caption(
+            "Check that ercot_nodal_module.py is uploaded beside app.py and that the "
+            "existing requirements are installed. The rest of Sunstripe SELECT remains available."
+        )
 
     st.markdown('<div class="section-title">Historical nodal price intelligence</div>', unsafe_allow_html=True)
     st.caption(
