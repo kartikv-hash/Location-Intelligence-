@@ -4887,7 +4887,27 @@ if selected_signal == "I":
         )
 
     st.markdown(f"### Upload {selected_iso} queue / interconnection study records")
-    st.caption("Upload an official ISO/RTO, utility or consultant queue export to filter project records and summarize requested capacity. Queue MW is not available grid headroom.")
+    st.caption("Upload an official utility cluster participant / project queue export. DEC and DEP uploads are stored separately by their distinct Streamlit widget keys. Queue MW is not available grid headroom.")
+    if selected_iso.startswith(("DEC", "DEP")):
+        _duke_queue_template = pd.DataFrame(columns=[
+            "Project ID", "Project Name", "Technology", "Requested MW",
+            "Summer MW", "Winter MW", "Energy MWh", "POI", "Substation",
+            "Feeder", "Voltage (kV)", "Study Phase", "Service Type",
+            "Status", "County", "State", "Latitude", "Longitude",
+            "Source Document", "Report Page",
+        ])
+        st.download_button(
+            f"Download {selected_iso[:3]} project queue template",
+            data=_duke_queue_template.to_csv(index=False).encode("utf-8"),
+            file_name=f"{selected_iso[:3].lower()}_project_queue_template.csv",
+            mime="text/csv",
+            key=f"signal_duke_project_queue_template_{selected_iso[:3]}",
+        )
+        st.info(
+            "To display the project queue as a geographic concentration heatmap, include project Latitude and Longitude in the queue file. "
+            "The separate POI capacity heatmap above requires an authorized POI study export with coordinates and numeric study values. "
+            "No project positions or capacity values are fabricated."
+        )
     queue_upload = st.file_uploader(
         f"Upload {selected_iso} queue or interconnection study file (CSV or Excel)",
         type=["csv", "xlsx", "xls"],
@@ -4926,6 +4946,154 @@ if selected_signal == "I":
                             _queue_filtered = _queue_filtered[_queue_filtered[_queue_state_col].astype(str) == _queue_selected_state]
                 if _queue_poi_col:
                     st.caption(f"Detected point-of-interconnection / location field: {_queue_poi_col}")
+
+                # DEC / DEP project queue concentration heatmap.
+                # Uses only coordinates carried in the official queue export.
+                # It never geocodes POI names or invents project locations.
+                if selected_iso.startswith(("DEC", "DEP")):
+                    st.markdown(f"#### {selected_iso[:3]} project queue concentration heatmap")
+                    _queue_lat_col = next((
+                        c for c in _queue_filtered.columns
+                        if column_key(c) in {"latitude", "lat", "projectlatitude", "poilatitude", "sitelatitude"}
+                        or column_key(c).endswith("latitude")
+                    ), None)
+                    _queue_lon_col = next((
+                        c for c in _queue_filtered.columns
+                        if column_key(c) in {"longitude", "lon", "lng", "projectlongitude", "poilongitude", "sitelongitude"}
+                        or column_key(c).endswith("longitude")
+                    ), None)
+                    _queue_map_source = _queue_filtered.copy()
+
+                    # If the queue export has no coordinates, try a strict POI-name / bus-key
+                    # join to the coordinates in the separately uploaded official POI dataset.
+                    if (
+                        (not _queue_lat_col or not _queue_lon_col)
+                        and _queue_poi_col
+                        and isinstance(_duke_df, pd.DataFrame)
+                        and not _duke_df.empty
+                        and {"_sunstripe_map_lat", "_sunstripe_map_lon"}.issubset(_duke_df.columns)
+                    ):
+                        _queue_match_candidates = [c for c in (_duke_name_col, _duke_bus_col) if c and c in _duke_df.columns]
+                        for _queue_duke_match_col in _queue_match_candidates:
+                            _queue_lookup = _duke_df[[
+                                _queue_duke_match_col, "_sunstripe_map_lat", "_sunstripe_map_lon"
+                            ]].copy()
+                            _queue_lookup["_join_key"] = _queue_lookup[_queue_duke_match_col].astype(str).str.strip().str.casefold()
+                            _queue_lookup = _queue_lookup[
+                                _queue_lookup["_sunstripe_map_lat"].notna()
+                                & _queue_lookup["_sunstripe_map_lon"].notna()
+                                & _queue_lookup["_join_key"].ne("")
+                            ].drop_duplicates("_join_key")
+                            _queue_lookup = _queue_lookup.set_index("_join_key")
+                            _queue_map_source["_queue_join_key"] = _queue_map_source[_queue_poi_col].astype(str).str.strip().str.casefold()
+                            _queue_map_source["_queue_lat_joined"] = _queue_map_source["_queue_join_key"].map(_queue_lookup["_sunstripe_map_lat"])
+                            _queue_map_source["_queue_lon_joined"] = _queue_map_source["_queue_join_key"].map(_queue_lookup["_sunstripe_map_lon"])
+                            if _queue_map_source["_queue_lat_joined"].notna().any():
+                                _queue_lat_col, _queue_lon_col = "_queue_lat_joined", "_queue_lon_joined"
+                                break
+
+                    if _queue_lat_col and _queue_lon_col:
+                        _queue_map_df = _queue_map_source.copy()
+                        _queue_map_df["_queue_lat"] = pd.to_numeric(_queue_map_df[_queue_lat_col], errors="coerce")
+                        _queue_map_df["_queue_lon"] = pd.to_numeric(_queue_map_df[_queue_lon_col], errors="coerce")
+                        _queue_map_df = _queue_map_df[
+                            _queue_map_df["_queue_lat"].between(-90, 90)
+                            & _queue_map_df["_queue_lon"].between(-180, 180)
+                        ].copy()
+
+                        if not _queue_map_df.empty:
+                            from folium.plugins import HeatMap, MarkerCluster
+                            from html import escape as _queue_html_escape
+
+                            _queue_capacity_col = _queue_capacity_col
+                            _queue_weights = (
+                                pd.to_numeric(
+                                    _queue_map_df[_queue_capacity_col].astype(str).str.replace(r"[$,]", "", regex=True),
+                                    errors="coerce",
+                                ).fillna(0).clip(lower=0)
+                                if _queue_capacity_col else pd.Series(0.0, index=_queue_map_df.index)
+                            )
+                            _queue_weighted_by_mw = bool(_queue_weights.sum() > 0)
+                            if not _queue_weighted_by_mw:
+                                _queue_weights = pd.Series(1.0, index=_queue_map_df.index)
+
+                            _queue_heat_points = [
+                                [float(_lat), float(_lon), float(_weight)]
+                                for _lat, _lon, _weight in zip(
+                                    _queue_map_df["_queue_lat"],
+                                    _queue_map_df["_queue_lon"],
+                                    _queue_weights,
+                                )
+                            ]
+                            _queue_center = [
+                                float(_queue_map_df["_queue_lat"].median()),
+                                float(_queue_map_df["_queue_lon"].median()),
+                            ]
+                            _queue_map = folium.Map(
+                                location=_queue_center,
+                                zoom_start=6,
+                                tiles="OpenStreetMap",
+                                control_scale=True,
+                                prefer_canvas=True,
+                            )
+                            HeatMap(
+                                _queue_heat_points,
+                                name="Project queue concentration",
+                                radius=22,
+                                blur=18,
+                                min_opacity=0.25,
+                                max_zoom=12,
+                            ).add_to(_queue_map)
+
+                            _queue_markers = MarkerCluster(name="Project records").add_to(_queue_map)
+                            _queue_project_col = next((c for c in _queue_map_df.columns if column_key(c) in {"projectname", "project", "facilityname", "name"}), None)
+                            _queue_id_col = next((c for c in _queue_map_df.columns if column_key(c) in {"projectid", "queueid", "requestid", "interconnectionid"}), None)
+                            _queue_technology_col = next((c for c in _queue_map_df.columns if any(k in column_key(c) for k in ("technology", "fuel", "resource"))), None)
+                            _queue_count = min(len(_queue_map_df), 2500)
+                            for _, _queue_row in _queue_map_df.head(_queue_count).iterrows():
+                                _queue_name = str(_queue_row.get(_queue_project_col, "Project record")) if _queue_project_col else "Project record"
+                                _queue_popup_lines = [f"<b>{_queue_html_escape(_queue_name)}</b>"]
+                                for _field in (_queue_id_col, _queue_technology_col, _queue_capacity_col, _queue_status_col, _queue_poi_col):
+                                    if _field and _field in _queue_map_df.columns:
+                                        _value = _queue_row.get(_field)
+                                        if pd.notna(_value) and str(_value).strip():
+                                            _queue_popup_lines.append(
+                                                f"<br><b>{_queue_html_escape(str(_field))}:</b> {_queue_html_escape(str(_value))}"
+                                            )
+                                folium.Marker(
+                                    location=[float(_queue_row["_queue_lat"]), float(_queue_row["_queue_lon"])],
+                                    tooltip=_queue_html_escape(_queue_name),
+                                    popup=folium.Popup("".join(_queue_popup_lines), max_width=360),
+                                ).add_to(_queue_markers)
+
+                            folium.LayerControl(collapsed=True).add_to(_queue_map)
+                            st_folium(
+                                _queue_map,
+                                width=None,
+                                height=540,
+                                key=f"signal_duke_project_queue_heatmap_{selected_iso[:3]}",
+                                returned_objects=[],
+                            )
+                            _queue_weight_note = (
+                                "Heat intensity is weighted by the reported project MW field."
+                                if _queue_weighted_by_mw
+                                else "Heat intensity represents the number of mapped project records because no positive MW values were available."
+                            )
+                            st.caption(
+                                f"Mapped {_queue_count:,} individual project markers (heat layer uses all {len(_queue_map_df):,} valid coordinate records). "
+                                f"{_queue_weight_note} This is queue concentration, not available grid capacity."
+                            )
+                        else:
+                            st.warning(
+                                "The uploaded queue file has Latitude and Longitude columns, but no valid coordinate pairs were found. "
+                                "Check that latitude is between -90 and 90 and longitude is between -180 and 180."
+                            )
+                    else:
+                        st.info(
+                            "The queue records are available in the table below, but a map cannot be plotted because the queue export has no Latitude/Longitude fields. "
+                            "Add verified project or POI coordinates to the source export to enable this heatmap."
+                        )
+
                 st.dataframe(_queue_filtered, use_container_width=True, hide_index=True, height=400)
                 st.download_button(
                     "Download filtered interconnection records",
@@ -4948,6 +5116,70 @@ if selected_signal == "I":
     )
 
     if _duke_code:
+        # Light Sunstripe form controls for the DEC/DEP workflow only.
+        # This CSS is emitted only while DEC or DEP is selected in SIGNAL I.
+        st.markdown("""
+        <style>
+        [data-testid="stTextInput"] input,
+        [data-testid="stNumberInput"] input,
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stDateInput"] input {
+            background: #FFFDFA !important;
+            color: #171923 !important;
+            -webkit-text-fill-color: #171923 !important;
+            caret-color: #E8392D !important;
+            border: 1px solid #D8D0C9 !important;
+        }
+        [data-testid="stTextInput"] input::placeholder,
+        [data-testid="stTextArea"] textarea::placeholder {
+            color: #77717A !important;
+            -webkit-text-fill-color: #77717A !important;
+            opacity: 1 !important;
+        }
+        [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+            background: #FFFDFA !important;
+            color: #171923 !important;
+            border-color: #D8D0C9 !important;
+        }
+        [data-testid="stSelectbox"] div[data-baseweb="select"] span,
+        [data-testid="stSelectbox"] div[data-baseweb="select"] input,
+        [data-baseweb="popover"] [role="option"],
+        [data-baseweb="menu"] [role="option"] {
+            color: #171923 !important;
+            -webkit-text-fill-color: #171923 !important;
+        }
+        [data-baseweb="popover"] [role="listbox"],
+        [data-baseweb="menu"] {
+            background: #FFFFFF !important;
+        }
+        [data-testid="stWidgetLabel"],
+        [data-testid="stWidgetLabel"] *,
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stMarkdownContainer"] label,
+        [data-testid="stCheckbox"] label,
+        [data-testid="stCheckbox"] label * {
+            color: #171923 !important;
+        }
+        [data-testid="stFileUploader"] section {
+            background: #FFFDFA !important;
+            border: 1px dashed #CFC5BD !important;
+        }
+        [data-testid="stFileUploader"] section,
+        [data-testid="stFileUploader"] section * {
+            color: #343039 !important;
+        }
+        [data-testid="stFileUploader"] button {
+            background: #FFFFFF !important;
+            color: #E8392D !important;
+            border: 1px solid #E8392D !important;
+        }
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary * {
+            color: #171923 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
         st.markdown("---")
         st.markdown(
             '<div class="section-title">DEC / DEP — Cluster Study & '
@@ -5258,7 +5490,8 @@ if selected_signal == "I":
         # --------------------------------------------------------
         if _duke_run_analysis:
             try:
-                check_upload_size(_duke_uploads[0])
+                for _duke_file_to_check in _duke_uploads:
+                    check_upload_size(_duke_file_to_check)
 
                 with st.spinner(
                     "Extracting report text, tables and page references..."
