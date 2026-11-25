@@ -5788,6 +5788,27 @@ traceability. Do not invent missing engineering values.
                     f"duke_cluster_image_pages_{_duke_code}"
                 ] = _duke_image_pages
 
+                st.session_state[
+                    f"duke_cluster_page_refs_{_duke_code}"
+                ] = [
+                    {"Source Document": _page["source"], "PDF Page": _page["page"]}
+                    for _page in _duke_pages
+                ]
+                st.session_state[
+                    f"duke_cluster_project_details_{_duke_code}"
+                ] = {
+                    "Utility": _duke_code,
+                    "Project / site name": _duke_site_name or "Not provided",
+                    "Project technology": _duke_project_type,
+                    "Project capacity (MW)": _duke_project_mw,
+                    "BESS energy capacity (MWh)": _duke_project_mwh,
+                    "Project location": _duke_project_location or "Not provided",
+                    "Potential POI": _duke_poi or "Not provided",
+                    "BESS charging power (MW)": _duke_bess_charge,
+                    "BESS discharging power (MW)": _duke_bess_discharge,
+                    "Additional assumptions": _duke_site_notes or "None provided",
+                }
+
                 _duke_status.success(
                     "Cluster study analysis completed."
                 )
@@ -5848,6 +5869,832 @@ traceability. Do not invent missing engineering values.
                 use_container_width=True,
                 key=f"duke_cluster_download_{_duke_code}",
             )
+
+        # --------------------------------------------------------
+        # CLIENT DELIVERABLES — PDF, EXCEL DATABASE AND POI MAP
+        # This block is intentionally confined to the DEC / DEP workflow.
+        # --------------------------------------------------------
+        _duke_saved_result = st.session_state.get(
+            f"duke_cluster_result_{_duke_code}"
+        )
+
+        if _duke_saved_result:
+            st.markdown("---")
+            st.markdown("### 4. Client deliverables")
+            st.caption(
+                "Generate the executive engineering report, structured "
+                "interconnection workbook and geographic POI / constraint map "
+                "from the report and source datasets currently loaded for this utility."
+            )
+
+            _deliverable_tab_pdf, _deliverable_tab_excel, _deliverable_tab_map = st.tabs([
+                "Executive engineering report (PDF)",
+                "Interconnection database (Excel)",
+                "POI and constraint map",
+            ])
+
+            # Build source tables only from data actually loaded in the existing workflow.
+            _deliverable_poi_df = locals().get("_duke_df")
+            if not isinstance(_deliverable_poi_df, pd.DataFrame):
+                _deliverable_poi_df = pd.DataFrame()
+            _deliverable_constraints_df = locals().get("_duke_constraints_df")
+            if not isinstance(_deliverable_constraints_df, pd.DataFrame):
+                _deliverable_constraints_df = pd.DataFrame()
+            _deliverable_queue_df = locals().get("queue_data")
+            if not isinstance(_deliverable_queue_df, pd.DataFrame):
+                _deliverable_queue_df = pd.DataFrame()
+
+            def _deliverable_export_frame(_frame):
+                """Remove UI-only fields and convert complex cells to Excel-safe text."""
+                if not isinstance(_frame, pd.DataFrame) or _frame.empty:
+                    return pd.DataFrame()
+                _clean = _frame.copy()
+                _internal_cols = [
+                    _c for _c in _clean.columns
+                    if str(_c).startswith("_sunstripe_")
+                    and str(_c) not in {"_sunstripe_map_lat", "_sunstripe_map_lon"}
+                ]
+                if _internal_cols:
+                    _clean = _clean.drop(columns=_internal_cols, errors="ignore")
+                if "_sunstripe_map_lat" in _clean.columns:
+                    _clean["Latitude (mapped)"] = _clean["_sunstripe_map_lat"]
+                    _clean = _clean.drop(columns=["_sunstripe_map_lat"])
+                if "_sunstripe_map_lon" in _clean.columns:
+                    _clean["Longitude (mapped)"] = _clean["_sunstripe_map_lon"]
+                    _clean = _clean.drop(columns=["_sunstripe_map_lon"])
+                for _column in _clean.columns:
+                    if _clean[_column].dtype == "object":
+                        _clean[_column] = _clean[_column].map(
+                            lambda _v: json.dumps(_v, ensure_ascii=False, default=str)
+                            if isinstance(_v, (dict, list, tuple, set)) else _v
+                        )
+                return _clean
+
+            def _deliverable_has_value(_value):
+                if _value is None:
+                    return False
+                try:
+                    if pd.isna(_value):
+                        return False
+                except (TypeError, ValueError):
+                    pass
+                return str(_value).strip().lower() not in {"", "nan", "none", "null", "n/a"}
+
+            def _deliverable_parse_report_tables(_markdown):
+                """Read Markdown tables from the AI assessment without inventing rows."""
+                _lines = str(_markdown or "").splitlines()
+                _heading = "Assessment findings"
+                _found = []
+                _index = 0
+
+                def _split_markdown_row(_line):
+                    return [
+                        _cell.strip().replace("<br>", " ").replace("<br/>", " ")
+                        for _cell in _line.strip().strip("|").split("|")
+                    ]
+
+                while _index < len(_lines):
+                    _line = _lines[_index].strip()
+                    _heading_match = re.match(r"^#{1,6}\s*(.+)$", _line)
+                    if _heading_match:
+                        _heading = re.sub(r"[*_`]", "", _heading_match.group(1)).strip()
+                    elif "|" not in _line and len(_line) < 140 and any(
+                        _term in _line.lower()
+                        for _term in ("dfax", "upgrade", "cost", "financial exposure", "cluster participant", "project queue", "constraint", "contingency")
+                    ):
+                        _heading = re.sub(r"[*_`]", "", _line).strip().strip(":")
+                    if (
+                        "|" in _line
+                        and _index + 1 < len(_lines)
+                        and "|" in _lines[_index + 1]
+                    ):
+                        _headers = _split_markdown_row(_line)
+                        _separator = _split_markdown_row(_lines[_index + 1].strip())
+                        _is_separator = (
+                            len(_headers) >= 2
+                            and len(_separator) == len(_headers)
+                            and all(re.fullmatch(r":?-{3,}:?", _cell.replace(" ", "")) for _cell in _separator)
+                        )
+                        if _is_separator:
+                            _rows = []
+                            _index += 2
+                            while _index < len(_lines) and "|" in _lines[_index]:
+                                _cells = _split_markdown_row(_lines[_index].strip())
+                                if len(_cells) == len(_headers):
+                                    _rows.append(_cells)
+                                _index += 1
+                            if _rows:
+                                _table = pd.DataFrame(_rows, columns=_headers)
+                                _table["Assessment Section"] = _heading
+                                _found.append((_heading, _table))
+                            continue
+                    _index += 1
+                return _found
+
+            _deliverable_report_tables = _deliverable_parse_report_tables(_duke_saved_result)
+            _deliverable_report_constraint_frames = [
+                _frame.copy()
+                for _heading, _frame in _deliverable_report_tables
+                if any(
+                    _term in re.sub(r"[^a-z0-9]+", " ", str(_heading) + " " + " ".join(map(str, _frame.columns))).lower()
+                    for _term in ("constraint", "contingency", "monitored facility", "facility loading")
+                )
+            ]
+            _deliverable_report_queue_frames = [
+                _frame.copy()
+                for _heading, _frame in _deliverable_report_tables
+                if any(
+                    _term in re.sub(r"[^a-z0-9]+", " ", str(_heading) + " " + " ".join(map(str, _frame.columns))).lower()
+                    for _term in ("queue", "cluster participant", "project participant")
+                )
+            ]
+
+            def _deliverable_build_register(_tables, _trigger_terms, _context_terms):
+                """Extract rows with source-populated register fields; never synthesize values."""
+                _parts = []
+                for _table_name, _raw_frame in _tables:
+                    if not isinstance(_raw_frame, pd.DataFrame) or _raw_frame.empty:
+                        continue
+                    _trigger_cols = [
+                        _c for _c in _raw_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in _trigger_terms)
+                    ]
+                    if not _trigger_cols:
+                        continue
+                    _context_cols = [
+                        _c for _c in _raw_frame.columns
+                        if _c in _trigger_cols or any(
+                            _term in re.sub(r"[^a-z0-9]", "", str(_c).lower())
+                            for _term in _context_terms
+                        )
+                    ]
+                    _matched = _raw_frame[_raw_frame[_trigger_cols].apply(
+                        lambda _row: any(_deliverable_has_value(_value) for _value in _row), axis=1
+                    )].copy()
+                    if not _matched.empty:
+                        _matched.insert(0, "Source Table", _table_name)
+                        _parts.append(_matched[_matched.columns[:1].tolist() + _context_cols])
+                if _parts:
+                    return _deliverable_export_frame(pd.concat(_parts, ignore_index=True, sort=False))
+                return pd.DataFrame({"Status": ["No matching populated fields were found in the uploaded source tables."]})
+
+            _deliverable_sources = st.session_state.get(
+                f"duke_cluster_sources_{_duke_code}", ""
+            )
+            _deliverable_project_details = st.session_state.get(
+                f"duke_cluster_project_details_{_duke_code}", {}
+            )
+            if not isinstance(_deliverable_project_details, dict):
+                _deliverable_project_details = {}
+            _deliverable_source_files = [
+                _name.strip() for _name in str(_deliverable_sources).split(",") if _name.strip()
+            ]
+            _deliverable_page_refs = st.session_state.get(
+                f"duke_cluster_page_refs_{_duke_code}", []
+            )
+            _deliverable_reference_rows = list(_deliverable_page_refs) if _deliverable_page_refs else []
+            if not _deliverable_reference_rows:
+                _deliverable_reference_rows = [
+                    {
+                        "Source Document": _name,
+                        "PDF Page": "Page citations are embedded in the assessment report",
+                    }
+                    for _name in _deliverable_source_files
+                ]
+            if _deliverable_reference_rows:
+                _deliverable_reference_rows = [
+                    {**_row, "Utility": _duke_code, "Reference Note": "Page-level source traceability is cited in the cluster assessment."}
+                    for _row in _deliverable_reference_rows
+                ]
+            else:
+                _deliverable_reference_rows = [{
+                    "Utility": _duke_code,
+                    "Source Document": "Not available",
+                    "PDF Page": "Not available",
+                    "Reference Note": "No source-document reference index was saved.",
+                }]
+
+            with _deliverable_tab_pdf:
+                st.markdown("#### Executive engineering report")
+                st.caption(
+                    "Includes the project decision summary, technical findings, "
+                    "risk and upgrade exposure, source documents and final recommendation."
+                )
+                st.write(
+                    "The PDF reproduces the completed cluster-study assessment and "
+                    "the project assumptions entered above."
+                )
+
+                _pdf_project_fields = [
+                    ("Utility", _duke_code),
+                    ("Project / site name", _deliverable_project_details.get("Project / site name", "Not provided")),
+                    ("Project technology", _deliverable_project_details.get("Project technology", "Not provided")),
+                    ("Project capacity (MW)", _deliverable_project_details.get("Project capacity (MW)", "Not provided")),
+                    ("BESS energy capacity (MWh)", _deliverable_project_details.get("BESS energy capacity (MWh)", "Not provided")),
+                    ("Project location", _deliverable_project_details.get("Project location", "Not provided")),
+                    ("Potential POI", _deliverable_project_details.get("Potential POI", "Not provided")),
+                    ("BESS charging power (MW)", _deliverable_project_details.get("BESS charging power (MW)", "Not provided")),
+                    ("BESS discharging power (MW)", _deliverable_project_details.get("BESS discharging power (MW)", "Not provided")),
+                    ("Additional assumptions", _deliverable_project_details.get("Additional assumptions", "None provided")),
+                    ("Source documents", _deliverable_sources or "Not available"),
+                ]
+
+                if st.button(
+                    "Prepare executive engineering PDF",
+                    use_container_width=True,
+                    key=f"duke_prepare_client_pdf_{_duke_code}",
+                ):
+                    try:
+                        import unicodedata
+
+                        class _SunstripeClientPDF(FPDF):
+                            def footer(self):
+                                self.set_y(-12)
+                                self.set_font("Helvetica", "", 8)
+                                self.set_text_color(105, 105, 112)
+                                self.cell(0, 6, f"Sunstripe SELECT | {_duke_code} | Page {self.page_no()}", align="C")
+
+                        def _pdf_safe_text(_value):
+                            _normal = unicodedata.normalize("NFKD", str(_value))
+                            return _normal.encode("latin-1", "replace").decode("latin-1")
+
+                        _client_pdf = _SunstripeClientPDF()
+                        _client_pdf.set_title(f"Sunstripe SELECT {_duke_code} Cluster Study Assessment")
+                        _client_pdf.set_author("Sunstripe SELECT")
+                        _client_pdf.set_margins(15, 15, 15)
+                        _client_pdf.set_auto_page_break(auto=True, margin=17)
+                        _client_pdf.add_page()
+                        _client_pdf.set_fill_color(5, 7, 20)
+                        _client_pdf.set_text_color(255, 255, 255)
+                        _client_pdf.set_font("Helvetica", "B", 19)
+                        _client_pdf.cell(0, 12, _pdf_safe_text("SUNSTRIPE SELECT"), ln=1)
+                        _client_pdf.set_text_color(232, 57, 45)
+                        _client_pdf.set_font("Helvetica", "B", 14)
+                        _client_pdf.multi_cell(0, 8, _pdf_safe_text(f"{_duke_code} Cluster Study & Interconnection Intelligence Assessment"), new_x="LMARGIN", new_y="NEXT")
+                        _client_pdf.set_text_color(70, 70, 78)
+                        _client_pdf.set_font("Helvetica", "", 9)
+                        _client_pdf.multi_cell(0, 5, _pdf_safe_text(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} | Source documents: {_deliverable_sources or 'Not available'}"), new_x="LMARGIN", new_y="NEXT")
+                        _client_pdf.ln(3)
+
+                        _client_pdf.set_text_color(5, 7, 20)
+                        _client_pdf.set_font("Helvetica", "B", 12)
+                        _client_pdf.cell(0, 8, _pdf_safe_text("Project details and assumptions"), ln=1)
+                        _client_pdf.set_font("Helvetica", "", 9)
+                        for _field, _value in _pdf_project_fields:
+                            _client_pdf.set_font("Helvetica", "B", 9)
+                            _client_pdf.write(5, _pdf_safe_text(f"{_field}: "))
+                            _client_pdf.set_font("Helvetica", "", 9)
+                            _client_pdf.multi_cell(0, 5, _pdf_safe_text(_value), new_x="LMARGIN", new_y="NEXT")
+                        _client_pdf.ln(3)
+                        _client_pdf.set_font("Helvetica", "B", 13)
+                        _client_pdf.set_text_color(232, 57, 45)
+                        _client_pdf.cell(0, 9, _pdf_safe_text("Cluster study intelligence assessment"), ln=1)
+
+                        for _report_line in str(_duke_saved_result).splitlines():
+                            _trimmed = _report_line.strip()
+                            if not _trimmed:
+                                _client_pdf.ln(2)
+                                continue
+                            if _trimmed.startswith("```") or re.fullmatch(r"[-|: ]{3,}", _trimmed):
+                                continue
+                            _heading_match = re.match(r"^(#{1,6})\s*(.*)$", _trimmed)
+                            if _heading_match:
+                                _client_pdf.ln(2)
+                                _client_pdf.set_text_color(5, 7, 20)
+                                _client_pdf.set_font("Helvetica", "B", max(10, 14 - len(_heading_match.group(1))))
+                                _client_pdf.multi_cell(0, 6, _pdf_safe_text(re.sub(r"[*_`]", "", _heading_match.group(2))), new_x="LMARGIN", new_y="NEXT")
+                                _client_pdf.set_font("Helvetica", "", 9)
+                                continue
+                            _body = re.sub(r"[*_`]", "", _trimmed)
+                            _body = _body.replace("|", "  |  ")
+                            if _body.startswith(("- ", "* ")):
+                                _body = "- " + _body[2:]
+                            _client_pdf.set_text_color(35, 35, 42)
+                            _client_pdf.set_font("Helvetica", "", 8.5)
+                            _client_pdf.multi_cell(0, 4.7, _pdf_safe_text(_body), new_x="LMARGIN", new_y="NEXT")
+
+                        _client_pdf.ln(3)
+                        _client_pdf.set_font("Helvetica", "B", 9)
+                        _client_pdf.set_text_color(160, 35, 30)
+                        _client_pdf.multi_cell(
+                            0, 5,
+                            _pdf_safe_text(
+                                "Engineering reliance note: This assessment is based on uploaded documents and available source tables. "
+                                "It is not a substitute for utility-approved studies, validated network models or independent engineering review. "
+                                "Missing data is not evidence of available capacity or a passed study."
+                            ),
+                            new_x="LMARGIN",
+                            new_y="NEXT",
+                        )
+                        _pdf_output = _client_pdf.output(dest="S")
+                        _pdf_bytes = _pdf_output.encode("latin-1") if isinstance(_pdf_output, str) else bytes(_pdf_output)
+                        st.session_state[f"duke_client_pdf_{_duke_code}"] = _pdf_bytes
+                        st.success("Executive engineering PDF prepared.")
+                    except Exception as _pdf_error:
+                        st.error(f"Could not prepare the PDF: {_pdf_error}")
+
+                _saved_pdf_bytes = st.session_state.get(f"duke_client_pdf_{_duke_code}")
+                if _saved_pdf_bytes:
+                    st.download_button(
+                        "Download executive engineering report (PDF)",
+                        data=_saved_pdf_bytes,
+                        file_name=f"Sunstripe_SELECT_{_duke_code}_Executive_Engineering_Report.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key=f"duke_download_client_pdf_{_duke_code}",
+                    )
+
+            with _deliverable_tab_excel:
+                st.markdown("#### Interconnection database")
+                st.caption(
+                    "One workbook with source-backed DFAX, facility, queue, "
+                    "upgrade, cost, POI and source-reference registers."
+                )
+                if st.button(
+                    "Prepare interconnection Excel workbook",
+                    use_container_width=True,
+                    key=f"duke_prepare_client_excel_{_duke_code}",
+                ):
+                    try:
+                        _tables_for_registers = [
+                            ("POI Study Data", _deliverable_poi_df),
+                            ("Facility Constraints", _deliverable_constraints_df),
+                            ("Project Queue", _deliverable_queue_df),
+                        ]
+                        _report_queue_frames = []
+                        _report_constraint_frames = []
+                        for _report_heading, _report_table in _deliverable_report_tables:
+                            _heading_and_columns = (
+                                str(_report_heading) + " " + " ".join(map(str, _report_table.columns))
+                            ).lower()
+                            _normalised_report_text = re.sub(r"[^a-z0-9]+", " ", _heading_and_columns)
+                            _register_table = _report_table.copy()
+                            if "dfax" in _normalised_report_text:
+                                _register_table["DFAX assessment section"] = _report_heading
+                                _tables_for_registers.append((f"AI report: {_report_heading}", _register_table))
+                            if any(_term in _normalised_report_text for _term in ("upgrade", "reinforcement", "network modification")):
+                                _register_table["Upgrade assessment section"] = _report_heading
+                                _tables_for_registers.append((f"AI report: {_report_heading}", _register_table))
+                            if any(_term in _normalised_report_text for _term in ("cost", "financial", "allocation", "estimate")):
+                                _register_table["Cost assessment section"] = _report_heading
+                                _tables_for_registers.append((f"AI report: {_report_heading}", _register_table))
+                            if any(_term in _normalised_report_text for _term in ("queue", "cluster participant", "project participant")):
+                                _report_queue_frames.append(_report_table.copy())
+                            if any(_term in _normalised_report_text for _term in ("constraint", "contingency", "monitored facility", "facility loading")):
+                                _report_constraint_frames.append(_report_table.copy())
+                        _deliverable_report_constraint_frames = _report_constraint_frames
+                        _dfax_register = _deliverable_build_register(
+                            _tables_for_registers,
+                            ("dfax",),
+                            ("facility", "contingency", "generator", "project", "poi", "bus", "voltage", "rating", "loading", "impact", "source", "page"),
+                        )
+                        _upgrade_register = _deliverable_build_register(
+                            _tables_for_registers,
+                            ("upgrade", "reinforcement", "networkmodification"),
+                            ("facility", "contingency", "project", "poi", "bus", "description", "cost", "mw", "mva", "voltage", "schedule", "leadtime", "source", "page"),
+                        )
+                        _cost_register = _deliverable_build_register(
+                            _tables_for_registers,
+                            ("cost", "estimate", "allocation", "amount", "budget", "usd", "dollar"),
+                            ("facility", "contingency", "project", "poi", "bus", "upgrade", "description", "category", "class", "share", "source", "page"),
+                        )
+
+                        _poi_export = _deliverable_export_frame(_deliverable_poi_df)
+                        _constraint_source_frames = [
+                            _frame for _frame in [_deliverable_constraints_df] + _report_constraint_frames
+                            if isinstance(_frame, pd.DataFrame) and not _frame.empty
+                        ]
+                        _queue_source_frames = [
+                            _frame for _frame in [_deliverable_queue_df] + _report_queue_frames
+                            if isinstance(_frame, pd.DataFrame) and not _frame.empty
+                        ]
+                        _constraint_combined = pd.concat(_constraint_source_frames, ignore_index=True, sort=False) if _constraint_source_frames else pd.DataFrame()
+                        _queue_combined = pd.concat(_queue_source_frames, ignore_index=True, sort=False) if _queue_source_frames else pd.DataFrame()
+                        _constraint_export = _deliverable_export_frame(_constraint_combined)
+                        _queue_export = _deliverable_export_frame(_queue_combined)
+                        if _poi_export.empty:
+                            _poi_export = pd.DataFrame({"Status": ["No POI study dataset was loaded for this utility."]})
+                        if _constraint_export.empty:
+                            _constraint_export = pd.DataFrame({"Status": ["No separate monitored-facility / contingency table was loaded."]})
+                        if _queue_export.empty:
+                            _queue_export = pd.DataFrame({"Status": ["No project queue file was loaded in the interconnection queue uploader."]})
+                        _reference_export = _deliverable_export_frame(pd.DataFrame(_deliverable_reference_rows))
+                        _overview_export = pd.DataFrame([
+                            {"Field": "Utility", "Value": _duke_code},
+                            {"Field": "Project / site", "Value": _deliverable_project_details.get("Project / site name", "Not provided")},
+                            {"Field": "Technology", "Value": _deliverable_project_details.get("Project technology", "Not provided")},
+                            {"Field": "Project capacity (MW)", "Value": _deliverable_project_details.get("Project capacity (MW)", "Not provided")},
+                            {"Field": "Project energy capacity (MWh)", "Value": _deliverable_project_details.get("BESS energy capacity (MWh)", "Not provided")},
+                            {"Field": "Project location", "Value": _deliverable_project_details.get("Project location", "Not provided")},
+                            {"Field": "Potential POI", "Value": _deliverable_project_details.get("Potential POI", "Not provided")},
+                            {"Field": "Source documents", "Value": _deliverable_sources or "Not available"},
+                            {"Field": "Engineering assessment", "Value": "See PDF / in-app cluster report. Missing source data is not inferred."},
+                        ])
+
+                        from openpyxl.styles import Alignment as _XLAlignment, Font as _XLFont, PatternFill as _XLPatternFill
+
+                        _excel_buffer = io.BytesIO()
+                        with pd.ExcelWriter(_excel_buffer, engine="openpyxl") as _writer:
+                            _overview_export.to_excel(_writer, sheet_name="Project Overview", index=False)
+                            _dfax_register.to_excel(_writer, sheet_name="DFAX Register", index=False)
+                            _constraint_export.to_excel(_writer, sheet_name="Facility Constraints", index=False)
+                            _queue_export.to_excel(_writer, sheet_name="Project Queue", index=False)
+                            _upgrade_register.to_excel(_writer, sheet_name="Upgrade Register", index=False)
+                            _cost_register.to_excel(_writer, sheet_name="Cost Register", index=False)
+                            _poi_export.to_excel(_writer, sheet_name="POI Study Data", index=False)
+                            _reference_export.to_excel(_writer, sheet_name="Source References", index=False)
+                            for _sheet in _writer.book.worksheets:
+                                _sheet.freeze_panes = "A2"
+                                _sheet.auto_filter.ref = _sheet.dimensions
+                                for _cells in _sheet.columns:
+                                    _max_len = max(
+                                        (len(str(_cell.value)) if _cell.value is not None else 0 for _cell in _cells),
+                                        default=10,
+                                    )
+                                    _sheet.column_dimensions[_cells[0].column_letter].width = min(max(_max_len + 2, 12), 48)
+                                for _cell in _sheet[1]:
+                                    _cell.font = _XLFont(name="Inter", size=10, bold=True, color="FFFFFF")
+                                    _cell.fill = _XLPatternFill("solid", fgColor="050714")
+                                    _cell.alignment = _XLAlignment(wrap_text=True, vertical="center")
+                                _sheet.row_dimensions[1].height = 30
+                        _excel_buffer.seek(0)
+                        st.session_state[f"duke_client_excel_{_duke_code}"] = _excel_buffer.getvalue()
+                        st.success("Interconnection database workbook prepared.")
+                    except Exception as _excel_error:
+                        st.error(f"Could not prepare the Excel workbook: {_excel_error}")
+
+                _saved_excel_bytes = st.session_state.get(f"duke_client_excel_{_duke_code}")
+                if _saved_excel_bytes:
+                    st.download_button(
+                        "Download interconnection database (Excel)",
+                        data=_saved_excel_bytes,
+                        file_name=f"Sunstripe_SELECT_{_duke_code}_Interconnection_Database.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key=f"duke_download_client_excel_{_duke_code}",
+                    )
+                st.caption(
+                    "Registers are populated only from the loaded source tables. "
+                    "If a DFAX, upgrade or cost register has no matching source fields, "
+                    "the workbook says so rather than creating values."
+                )
+
+            with _deliverable_tab_map:
+                st.markdown("#### POI and network constraint map")
+                st.caption(
+                    "Maps candidate project coordinates, POI / substation records, "
+                    "monitored constraints and transmission geometry only where "
+                    "verified geographic data is available in the uploaded sources."
+                )
+
+                def _deliverable_project_coordinates(_text):
+                    """Accept only explicitly labelled latitude/longitude coordinates."""
+                    _value = str(_text or "")
+                    _patterns = [
+                        r"lat(?:itude)?\s*[:=]\s*(-?\d+(?:\.\d+)?)\D{1,35}lon(?:gitude)?\s*[:=]\s*(-?\d+(?:\.\d+)?)",
+                        r"(?:coordinates?|coords?)\s*[:=]\s*(-?\d+(?:\.\d+)?)\s*[,;/]\s*(-?\d+(?:\.\d+)?)",
+                    ]
+                    for _pattern in _patterns:
+                        _match = re.search(_pattern, _value, flags=re.IGNORECASE)
+                        if _match:
+                            try:
+                                _lat, _lon = float(_match.group(1)), float(_match.group(2))
+                            except (TypeError, ValueError):
+                                continue
+                            if -90 <= _lat <= 90 and -180 <= _lon <= 180:
+                                return _lat, _lon
+                    return None
+
+                _poi_map_frame = locals().get("_duke_map_rows")
+                if not isinstance(_poi_map_frame, pd.DataFrame) or _poi_map_frame.empty:
+                    _poi_map_frame = _deliverable_poi_df.copy()
+                    if not _poi_map_frame.empty and {"_sunstripe_map_lat", "_sunstripe_map_lon"}.issubset(_poi_map_frame.columns):
+                        _poi_map_frame = _poi_map_frame[
+                            pd.to_numeric(_poi_map_frame["_sunstripe_map_lat"], errors="coerce").between(-90, 90)
+                            & pd.to_numeric(_poi_map_frame["_sunstripe_map_lon"], errors="coerce").between(-180, 180)
+                        ].copy()
+                    elif not _poi_map_frame.empty:
+                        _poi_map_frame = pd.DataFrame()
+
+                # Map queue projects only when coordinates are present or can be
+                # joined by an exact POI / bus / substation identifier match.
+                _queue_map_frames = [
+                    _frame for _frame in [_deliverable_queue_df] + _deliverable_report_queue_frames
+                    if isinstance(_frame, pd.DataFrame) and not _frame.empty
+                ]
+                _queue_map_frame = pd.concat(_queue_map_frames, ignore_index=True, sort=False) if _queue_map_frames else pd.DataFrame()
+                _queue_lat_col = next((
+                    _c for _c in _queue_map_frame.columns
+                    if re.sub(r"[^a-z0-9]", "", str(_c).lower()) in {"latitude", "lat", "projectlatitude", "facilitylatitude", "plantlatitude"}
+                    or "latitude" in re.sub(r"[^a-z0-9]", "", str(_c).lower())
+                ), None) if not _queue_map_frame.empty else None
+                _queue_lon_col = next((
+                    _c for _c in _queue_map_frame.columns
+                    if re.sub(r"[^a-z0-9]", "", str(_c).lower()) in {"longitude", "lon", "lng", "projectlongitude", "facilitylongitude", "plantlongitude"}
+                    or "longitude" in re.sub(r"[^a-z0-9]", "", str(_c).lower())
+                ), None) if not _queue_map_frame.empty else None
+                if not _queue_map_frame.empty:
+                    if _queue_lat_col and _queue_lon_col:
+                        _queue_map_frame["_deliverable_lat"] = pd.to_numeric(_queue_map_frame[_queue_lat_col], errors="coerce")
+                        _queue_map_frame["_deliverable_lon"] = pd.to_numeric(_queue_map_frame[_queue_lon_col], errors="coerce")
+                    elif not _poi_map_frame.empty and {"_sunstripe_map_lat", "_sunstripe_map_lon"}.issubset(_poi_map_frame.columns):
+                        _queue_poi_col = next((
+                            _c for _c in _queue_map_frame.columns
+                            if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("poiname", "pointofinterconnection", "substation", "interconnectionpoint", "poi", "busnumber", "busid"))
+                        ), None)
+                        _poi_match_cols = [
+                            _c for _c in (locals().get("_duke_name_col"), locals().get("_duke_bus_col"))
+                            if _c and _c in _poi_map_frame.columns
+                        ]
+                        _queue_coordinate_lookup = {}
+                        for _poi_match_col in _poi_match_cols:
+                            for _, _poi_match_row in _poi_map_frame.iterrows():
+                                _join_key = str(_poi_match_row.get(_poi_match_col, "")).strip().casefold()
+                                _join_lat = pd.to_numeric(pd.Series([_poi_match_row.get("_sunstripe_map_lat")]), errors="coerce").iloc[0]
+                                _join_lon = pd.to_numeric(pd.Series([_poi_match_row.get("_sunstripe_map_lon")]), errors="coerce").iloc[0]
+                                if _join_key and pd.notna(_join_lat) and pd.notna(_join_lon):
+                                    _queue_coordinate_lookup.setdefault(_join_key, (float(_join_lat), float(_join_lon)))
+                        if _queue_poi_col and _queue_coordinate_lookup:
+                            _queue_join_values = _queue_map_frame[_queue_poi_col].astype(str).str.strip().str.casefold()
+                            _queue_joined = _queue_join_values.map(_queue_coordinate_lookup)
+                            _queue_map_frame["_deliverable_lat"] = _queue_joined.map(lambda _v: _v[0] if isinstance(_v, tuple) else np.nan)
+                            _queue_map_frame["_deliverable_lon"] = _queue_joined.map(lambda _v: _v[1] if isinstance(_v, tuple) else np.nan)
+                    if {"_deliverable_lat", "_deliverable_lon"}.issubset(_queue_map_frame.columns):
+                        _queue_map_frame = _queue_map_frame[
+                            _queue_map_frame["_deliverable_lat"].between(-90, 90)
+                            & _queue_map_frame["_deliverable_lon"].between(-180, 180)
+                        ].copy()
+                    else:
+                        _queue_map_frame = pd.DataFrame()
+
+                _map_default_center = [35.45, -80.85] if _duke_code == "DEC" else [35.72, -78.78]
+                _map_locations = []
+                if not _queue_map_frame.empty:
+                    _map_locations.extend([
+                        [float(_lat), float(_lon)]
+                        for _lat, _lon in zip(_queue_map_frame["_deliverable_lat"], _queue_map_frame["_deliverable_lon"])
+                        if pd.notna(_lat) and pd.notna(_lon)
+                    ])
+                if not _poi_map_frame.empty and {"_sunstripe_map_lat", "_sunstripe_map_lon"}.issubset(_poi_map_frame.columns):
+                    _map_locations.extend([
+                        [float(_lat), float(_lon)]
+                        for _lat, _lon in zip(
+                            pd.to_numeric(_poi_map_frame["_sunstripe_map_lat"], errors="coerce"),
+                            pd.to_numeric(_poi_map_frame["_sunstripe_map_lon"], errors="coerce"),
+                        )
+                        if pd.notna(_lat) and pd.notna(_lon) and -90 <= float(_lat) <= 90 and -180 <= float(_lon) <= 180
+                    ])
+                _project_coords = _deliverable_project_coordinates(
+                    " ".join([
+                        str(_deliverable_project_details.get("Additional assumptions", "")),
+                        str(_deliverable_project_details.get("Project location", "")),
+                    ])
+                )
+                if _project_coords:
+                    _map_locations.append([_project_coords[0], _project_coords[1]])
+                _map_center = [
+                    float(np.mean([_point[0] for _point in _map_locations])),
+                    float(np.mean([_point[1] for _point in _map_locations])),
+                ] if _map_locations else _map_default_center
+
+                _client_map = folium.Map(
+                    location=_map_center,
+                    zoom_start=7 if _map_locations else 6,
+                    tiles="OpenStreetMap",
+                    control_scale=True,
+                    prefer_canvas=True,
+                )
+                from folium.plugins import Fullscreen, MeasureControl
+                from html import escape as _deliverable_html_escape
+                Fullscreen(position="topright", title="Expand map", title_cancel="Exit fullscreen").add_to(_client_map)
+                MeasureControl(position="topleft", primary_length_unit="kilometers").add_to(_client_map)
+
+                _project_layer = folium.FeatureGroup(name="Candidate project", show=True)
+                _queue_project_layer = folium.FeatureGroup(name="Cluster queue projects", show=True)
+                _poi_layer = folium.FeatureGroup(name="POI / substations", show=True)
+                _constraint_layer = folium.FeatureGroup(name="Monitored constraints", show=True)
+                _transmission_layer = folium.FeatureGroup(name="Transmission facilities", show=True)
+
+                if _project_coords:
+                    folium.Marker(
+                        location=[_project_coords[0], _project_coords[1]],
+                        tooltip="Candidate project site",
+                        popup=folium.Popup(_deliverable_html_escape(str(_deliverable_project_details.get("Project / site name", "Candidate project"))), max_width=280),
+                        icon=folium.Icon(color="red", icon="star"),
+                    ).add_to(_project_layer)
+
+                _mapped_queue_count = 0
+                if not _queue_map_frame.empty:
+                    _queue_project_col = next((
+                        _c for _c in _queue_map_frame.columns
+                        if re.sub(r"[^a-z0-9]", "", str(_c).lower()) in {"projectname", "project", "facilityname", "name"}
+                    ), None)
+                    _queue_id_col = next((
+                        _c for _c in _queue_map_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("projectid", "queueid", "requestid", "interconnectionid"))
+                    ), None)
+                    _queue_tech_col = next((
+                        _c for _c in _queue_map_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("technology", "fuel", "resource"))
+                    ), None)
+                    _queue_capacity_col_map = next((
+                        _c for _c in _queue_map_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("requestedmw", "capacitymw", "projectmw", "interconnectionmw"))
+                    ), None)
+                    _queue_status_col_map = next((
+                        _c for _c in _queue_map_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("status", "queuestatus", "studyphase"))
+                    ), None)
+                    _queue_poi_col_map = next((
+                        _c for _c in _queue_map_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("poiname", "pointofinterconnection", "substation", "poi"))
+                    ), None)
+                    for _queue_idx, _queue_row in _queue_map_frame.head(3000).iterrows():
+                        _queue_name = str(_queue_row.get(_queue_project_col, f"Queue project {_queue_idx + 1}")) if _queue_project_col else f"Queue project {_queue_idx + 1}"
+                        _queue_popup = ["<b>" + _deliverable_html_escape(_queue_name) + "</b>"]
+                        for _field in (_queue_id_col, _queue_tech_col, _queue_capacity_col_map, _queue_status_col_map, _queue_poi_col_map):
+                            if _field and _deliverable_has_value(_queue_row.get(_field)):
+                                _queue_popup.append(f"<br><b>{_deliverable_html_escape(str(_field))}:</b> {_deliverable_html_escape(str(_queue_row.get(_field)))}")
+                        folium.CircleMarker(
+                            location=[float(_queue_row["_deliverable_lat"]), float(_queue_row["_deliverable_lon"])],
+                            radius=5, color="#7352A3", fill=True, fill_color="#7352A3", fill_opacity=0.82,
+                            tooltip=_deliverable_html_escape(_queue_name),
+                            popup=folium.Popup("".join(_queue_popup), max_width=380),
+                        ).add_to(_queue_project_layer)
+                        _mapped_queue_count += 1
+
+                _mapped_poi_count = 0
+                if not _poi_map_frame.empty and {"_sunstripe_map_lat", "_sunstripe_map_lon"}.issubset(_poi_map_frame.columns):
+                    _poi_name_field = locals().get("_duke_name_col")
+                    _poi_type_field = next((
+                        _c for _c in _poi_map_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("facilitytype", "assettype", "pointtype", "type"))
+                    ), None)
+                    for _poi_idx, _poi_row in _poi_map_frame.head(3000).iterrows():
+                        _lat = pd.to_numeric(pd.Series([_poi_row.get("_sunstripe_map_lat")]), errors="coerce").iloc[0]
+                        _lon = pd.to_numeric(pd.Series([_poi_row.get("_sunstripe_map_lon")]), errors="coerce").iloc[0]
+                        if pd.isna(_lat) or pd.isna(_lon) or not (-90 <= float(_lat) <= 90 and -180 <= float(_lon) <= 180):
+                            continue
+                        _poi_name = str(_poi_row.get(_poi_name_field, f"POI record {_poi_idx + 1}")) if _poi_name_field else f"POI record {_poi_idx + 1}"
+                        _poi_type = str(_poi_row.get(_poi_type_field, "")) if _poi_type_field else ""
+                        _is_substation = "substation" in (_poi_name + " " + _poi_type).lower() or "station" in (_poi_name + " " + _poi_type).lower()
+                        _popup_fields = []
+                        for _field in list(_poi_map_frame.columns):
+                            if str(_field).startswith("_sunstripe_"):
+                                continue
+                            _value = _poi_row.get(_field)
+                            if _deliverable_has_value(_value):
+                                _popup_fields.append(f"<br><b>{_deliverable_html_escape(str(_field))}:</b> {_deliverable_html_escape(str(_value))}")
+                            if len(_popup_fields) >= 6:
+                                break
+                        folium.CircleMarker(
+                            location=[float(_lat), float(_lon)],
+                            radius=6,
+                            color="#236B9B" if not _is_substation else "#D28B24",
+                            fill=True,
+                            fill_color="#236B9B" if not _is_substation else "#D28B24",
+                            fill_opacity=0.88,
+                            tooltip=_deliverable_html_escape(_poi_name),
+                            popup=folium.Popup("<b>" + _deliverable_html_escape(_poi_name) + "</b>" + "".join(_popup_fields), max_width=380),
+                        ).add_to(_poi_layer)
+                        _mapped_poi_count += 1
+
+                _mapped_constraint_count = 0
+                _constraint_map_frames = [
+                    _frame for _frame in [_deliverable_constraints_df] + _deliverable_report_constraint_frames
+                    if isinstance(_frame, pd.DataFrame) and not _frame.empty
+                ]
+                _constraint_frame = pd.concat(_constraint_map_frames, ignore_index=True, sort=False) if _constraint_map_frames else pd.DataFrame()
+                if not _constraint_frame.empty:
+                    _constraint_lat_col = next((
+                        _c for _c in _constraint_frame.columns
+                        if re.sub(r"[^a-z0-9]", "", str(_c).lower()) in {"latitude", "lat", "facilitylatitude", "poilatitude"}
+                    ), None)
+                    _constraint_lon_col = next((
+                        _c for _c in _constraint_frame.columns
+                        if re.sub(r"[^a-z0-9]", "", str(_c).lower()) in {"longitude", "lon", "lng", "facilitylongitude", "poilongitude"}
+                    ), None)
+                    _constraint_match_col = next((
+                        _c for _c in _constraint_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("poiname", "pointofinterconnection", "busnumber", "busid", "substation", "stationname"))
+                    ), None)
+                    _poi_join_columns = [
+                        _c for _c in (locals().get("_duke_name_col"), locals().get("_duke_bus_col"))
+                        if _c and _c in _deliverable_poi_df.columns
+                    ]
+                    _coordinate_lookup = {}
+                    if _poi_join_columns and not _deliverable_poi_df.empty and {"_sunstripe_map_lat", "_sunstripe_map_lon"}.issubset(_deliverable_poi_df.columns):
+                        for _, _poi_row in _deliverable_poi_df.iterrows():
+                            _lat = pd.to_numeric(pd.Series([_poi_row.get("_sunstripe_map_lat")]), errors="coerce").iloc[0]
+                            _lon = pd.to_numeric(pd.Series([_poi_row.get("_sunstripe_map_lon")]), errors="coerce").iloc[0]
+                            if pd.notna(_lat) and pd.notna(_lon):
+                                for _poi_join_column in _poi_join_columns:
+                                    _key = str(_poi_row.get(_poi_join_column, "")).strip().casefold()
+                                    if _key:
+                                        _coordinate_lookup.setdefault(_key, (float(_lat), float(_lon)))
+                    for _constraint_idx, _constraint_row in _constraint_frame.head(3000).iterrows():
+                        _lat = pd.to_numeric(pd.Series([_constraint_row.get(_constraint_lat_col)]), errors="coerce").iloc[0] if _constraint_lat_col else np.nan
+                        _lon = pd.to_numeric(pd.Series([_constraint_row.get(_constraint_lon_col)]), errors="coerce").iloc[0] if _constraint_lon_col else np.nan
+                        if (pd.isna(_lat) or pd.isna(_lon)) and _constraint_match_col and _coordinate_lookup:
+                            _joined = _coordinate_lookup.get(str(_constraint_row.get(_constraint_match_col, "")).strip().casefold())
+                            if _joined:
+                                _lat, _lon = _joined
+                        if pd.isna(_lat) or pd.isna(_lon) or not (-90 <= float(_lat) <= 90 and -180 <= float(_lon) <= 180):
+                            continue
+                        _facility_col = next((
+                            _c for _c in _constraint_frame.columns
+                            if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("monitoredfacility", "facilityname", "facility", "line", "transformer", "feeder"))
+                        ), None)
+                        _facility_name = str(_constraint_row.get(_facility_col, f"Constraint {_constraint_idx + 1}")) if _facility_col else f"Constraint {_constraint_idx + 1}"
+                        _constraint_popup = []
+                        for _field in _constraint_frame.columns:
+                            _value = _constraint_row.get(_field)
+                            if _deliverable_has_value(_value):
+                                _constraint_popup.append(f"<br><b>{_deliverable_html_escape(str(_field))}:</b> {_deliverable_html_escape(str(_value))}")
+                            if len(_constraint_popup) >= 7:
+                                break
+                        folium.Marker(
+                            location=[float(_lat), float(_lon)],
+                            tooltip=_deliverable_html_escape(_facility_name),
+                            popup=folium.Popup("<b>" + _deliverable_html_escape(_facility_name) + "</b>" + "".join(_constraint_popup), max_width=400),
+                            icon=folium.Icon(color="red", icon="flash"),
+                        ).add_to(_constraint_layer)
+                        _mapped_constraint_count += 1
+
+                _geometry_source_frames = [
+                    _frame for _frame in [_deliverable_constraints_df, _deliverable_poi_df] + _deliverable_report_constraint_frames
+                    if isinstance(_frame, pd.DataFrame) and not _frame.empty
+                ]
+                # Revisit source geometry frames including page-referenced report tables.
+                # Point-only JSON geometries are intentionally not drawn as transmission lines.
+                _mapped_line_count = 0
+                for _geometry_frame in _geometry_source_frames:
+                    _geometry_col = next((
+                        _c for _c in _geometry_frame.columns
+                        if any(_term in re.sub(r"[^a-z0-9]", "", str(_c).lower()) for _term in ("geometry", "geom", "wkt", "geojson", "shape"))
+                    ), None)
+                    if not _geometry_col:
+                        continue
+                    for _, _geom_row in _geometry_frame.head(2000).iterrows():
+                        _geom_value = _geom_row.get(_geometry_col)
+                        _segments = []
+                        try:
+                            _parsed_geom = json.loads(_geom_value) if isinstance(_geom_value, str) else _geom_value
+                            if isinstance(_parsed_geom, dict):
+                                for _segment in iter_line_segments(_parsed_geom):
+                                    _clean_segment = clean_coordinate_segment(_segment)
+                                    if _clean_segment:
+                                        _segments.append(_clean_segment)
+                        except Exception:
+                            pass
+                        if not _segments and isinstance(_geom_value, str):
+                            try:
+                                _segments = parse_wkt_linestring(_geom_value)
+                            except Exception:
+                                _segments = []
+                        for _segment in _segments:
+                            _latlon = [[float(_point[1]), float(_point[0])] for _point in _segment]
+                            if len(_latlon) >= 2:
+                                folium.PolyLine(_latlon, color="#596B82", weight=3, opacity=0.82, tooltip="Source transmission facility geometry").add_to(_transmission_layer)
+                                _mapped_line_count += 1
+
+                for _layer in (_project_layer, _queue_project_layer, _poi_layer, _constraint_layer, _transmission_layer):
+                    _layer.add_to(_client_map)
+                folium.LayerControl(collapsed=False).add_to(_client_map)
+
+                _map_has_features = bool(_project_coords or _mapped_queue_count or _mapped_poi_count or _mapped_constraint_count or _mapped_line_count)
+                if not _map_has_features:
+                    st.warning(
+                        "No verified candidate-project, queue-project, POI, monitored-facility or transmission geometry coordinates "
+                        "were available in the loaded sources. The map is shown for regional context only; "
+                        "no locations or transmission routes have been invented."
+                    )
+                else:
+                    st.info(
+                        f"Mapped project site: {1 if _project_coords else 0}; "
+                        f"queue projects: {_mapped_queue_count:,}; "
+                        f"POI / substation records: {_mapped_poi_count:,}; "
+                        f"monitored constraints: {_mapped_constraint_count:,}; "
+                        f"transmission geometry segments: {_mapped_line_count:,}. "
+                        "Facility rows without coordinates remain available in the Excel workbook."
+                    )
+
+                st_folium(
+                    _client_map,
+                    width=None,
+                    height=560,
+                    key=f"duke_client_deliverables_map_{_duke_code}",
+                    returned_objects=[],
+                )
+                _map_html = _client_map.get_root().render().encode("utf-8")
+                st.download_button(
+                    "Download interactive POI and constraint map (HTML)",
+                    data=_map_html,
+                    file_name=f"Sunstripe_SELECT_{_duke_code}_POI_Constraint_Map.html",
+                    mime="text/html",
+                    use_container_width=True,
+                    key=f"duke_download_client_map_{_duke_code}",
+                )
 
         st.caption(
             "Engineering limitation: this module extracts selectable "
